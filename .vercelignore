@@ -1,0 +1,7 @@
+# Only the browser application is sent to Vercel.
+*
+!web/
+!web/**
+!vercel.json
+web/data/local*
+web/data/wti*

@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "dataset_id": "synthetic",
+  "dataset_label": "Synthetic oil futures",
+  "source": "Seeded Schwartz\u2013Smith simulation",
+  "price_unit": "USD per barrel",
+  "target": "maturity_rank",
+  "validation_start": "2024-01-01",
+  "test_start": "2025-01-01",
+  "train_end": "2023-12-29",
+  "horizons": [
+    1,
+    5,
+    20
+  ],
+  "quality": {
+    "trading_days": 782,
+    "observations": 4692,
+    "unique_contracts": 42,
+    "contracts_per_day": 6,
+    "min_tau": 0.0027378507871321013,
+    "max_tau": 0.5037645448323066,
+    "min_settlement": 58.50709620200037,
+    "max_settlement": 100.85645436326931
+  },
+  "models": {
+    "random_walk": "Random walk",
+    "one_factor": "One factor",
+    "two_factor": "Two factors"
+  },
+  "parameters": {
+    "one_factor": {
+      "mu": 0.02148213467541927,
+      "sigma": 0.2697019954220063,
+      "delta": -0.03892158837927088,
+      "sigma_epsilon": 0.009795308241806862
+    },
+    "two_factor": {
+      "kappa": 1.3775236549021734,
+      "sigma_chi": 0.2997583167590184,
+      "sigma_xi": 0.13895354925464054,
+      "rho": 0.25679417922065567,
+      "mu_xi": 0.02966400828241845,
+      "lambda_chi": 0.0,
+      "lambda_xi": 0.08619961035717741,
+      "sigma_epsilon": 0.0041375278182775735
+    }
+  },
+  "calibration": {
+    "method": "Training-only maximum likelihood",
+    "one_factor": {
+      "success": true,
+      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+      "training_log_likelihood": 4610.038557259648,
+      "iterations": 16,
+      "evaluations": 120
+    },
+    "two_factor": {
+      "success": true,
+      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+      "training_log_likelihood": 5631.171865523246,
+      "iterations": 55,
+      "evaluations": 600
+    },
+    "two_factor_starts": [
+      {
+        "success": true,
+        "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+        "training_log_likelihood": 5631.171865523246,
+        "iterations": 55,
+        "evaluations": 600
+      },
+      {
+        "success": true,
+        "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+        "training_log_likelihood": 5629.886870638425,
+        "iterations": 48,
+        "evaluations": 504
+      }
+    ],
+    "lambda_chi_fixed": 0.0
+  },
+  "assumptions": [
+    "One factor uses a Brownian log-price state with physical drift, not an OU state.",
+    "Random walk repeats the origin's maturity-rank curve; ranks can roll to new contracts.",
+    "Maturities use last trading date and calendar years of 365.25 days.",
+    "Forecast horizons count observations in the supplied trading-date panel.",
+    "States use observations through the origin; parameters stay fixed after training.",
+    "Exponentiated log forecasts are conditional medians, not price-level conditional means.",
+    "Filtered factors are model estimates. Same-day reconstruction is separate from prediction.",
+    "Initial states use the first training curve and a fixed prior covariance; initial-day predictions are not scored.",
+    "Demo quotes and monthly expiry dates are generated, not observed market data."
+  ],
+  "seed": 42
+}

@@ -1,0 +1,27 @@
+.daily-panel {margin: 12px 22px 18px; border: 1px solid var(--line); background: var(--panel); border-radius: 5px; padding: 15px;}
+.daily-toolbar {display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 15px;}
+.daily-toolbar label {display: flex; flex-direction: column; gap: 5px; font-size: 10px; color: var(--muted);}
+.daily-toolbar .button {font-size: 10px; padding: 6px 9px;}
+.daily-target-control {margin-left: auto;}
+.daily-freshness {font-size: 10px; color: #98abc9; flex-basis: 100%; line-height: 1.5;}
+.daily-stages {display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; border-bottom: 1px solid var(--line); padding-bottom: 13px;}
+.daily-stages > div {display: flex; flex-direction: column; gap: 5px;}
+.daily-stages span {font-size: 10px; color: var(--muted);}
+.daily-stages strong {font-size: 17px; font-weight: 500; color: #e4e9f2; font-variant-numeric: tabular-nums;}
+.daily-stages > div:first-child strong {font-size: 25px; color: var(--observed);}
+.daily-stages small {font-size: 10px; color: #8999b2; line-height: 1.4;}
+.daily-table th, .daily-table td {padding: 10px 6px; white-space: nowrap;}
+.daily-table .model-dot {margin-right: 6px;}
+.daily-table td:last-child {color: #92b2ff;}
+.table-scroll {overflow-x: auto;}
+.daily-state-row {display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 10px; margin-top: 15px; color: var(--muted);}
+.daily-state-row strong {color: #c7d7f3; font-variant-numeric: tabular-nums; font-weight: 500; margin-left: 5px;}
+.daily-note {color: #8493ad; font-size: 10px; line-height: 1.65; margin: 8px 0 0;}
+@media(max-width: 570px) {
+  .daily-panel {margin: 10px; padding: 10px;}
+  .daily-stages {grid-template-columns: 1fr; gap: 12px;}
+  .daily-stages > div {padding-bottom: 8px;}
+  .daily-target-control {margin-left: 0;}
+  .daily-table th, .daily-table td {font-size: 10px;}
+  .view-tabs button {padding-left: 5px; padding-right: 5px;}
+}

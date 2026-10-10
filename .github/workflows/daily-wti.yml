@@ -1,0 +1,44 @@
+name: Daily WTI settlements
+
+on:
+  schedule:
+    - cron: "17 1,5 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Estimate historical cost, initialize once, or update
+        required: true
+        default: estimate
+        type: choice
+        options: [estimate, initialize, update]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-wti-publication
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_LIVE_DATA == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install -e ".[live]"
+      - name: Fetch final prices and publish saved forecasts
+        env:
+          UPDATE_MODE: ${{ inputs.mode || 'update' }}
+          DATABENTO_API_KEY: ${{ secrets.DATABENTO_API_KEY }}
+          BLOB_PRIVATE_READ_WRITE_TOKEN: ${{ secrets.BLOB_PRIVATE_READ_WRITE_TOKEN }}
+          BLOB_PUBLIC_READ_WRITE_TOKEN: ${{ secrets.BLOB_PUBLIC_READ_WRITE_TOKEN }}
+          LIVE_DATA_DISPLAY_APPROVED: ${{ vars.LIVE_DATA_DISPLAY_APPROVED }}
+          LIVE_PUBLICATION_DELAY_HOURS: ${{ vars.LIVE_PUBLICATION_DELAY_HOURS || '0' }}
+          LIVE_MAX_COST_USD: ${{ inputs.mode == 'initialize' && vars.LIVE_INITIALIZE_MAX_COST_USD || vars.LIVE_MAX_COST_USD || '0' }}
+        run: python scripts/live_daily.py --mode "$UPDATE_MODE"

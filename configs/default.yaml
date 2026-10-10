@@ -1,0 +1,5 @@
+seed: 42
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  synthetic_dir: data/synthetic

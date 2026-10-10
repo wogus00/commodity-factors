@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#131722">
+  <meta name="description" content="Explore commodity futures curves and compare random-walk, one-factor, and two-factor forecasts.">
+  <title>Commodity Factors</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="daily.css">
+  <script defer src="vendor/plotly.min.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Commodity Factors home">
+      <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M3 21V12h5v9M12 21V6h5v15M21 21V3h4v18"/></svg>
+      <span>Commodity Factors</span>
+    </a>
+    <span class="workspace-name">Futures workspace</span>
+    <div class="top-actions">
+      <span class="history-badge"><i></i> <span id="feed-mode">HISTORICAL</span></span>
+      <button id="import-button" class="button subtle">Import results</button>
+      <button id="export-button" class="button blue">Export CSV <span aria-hidden="true">↓</span></button>
+      <input id="import-file" type="file" accept=".json,application/json" hidden>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <nav class="toolrail" aria-label="Workspace views">
+      <button class="rail-button active" data-view="market" aria-label="Market prices" title="Market prices · 1">
+        <svg viewBox="0 0 24 24"><path d="M3 18l5-6 4 3 8-10M3 4v16h18"/></svg>
+      </button>
+      <button class="rail-button" data-view="forecast" aria-label="Forecast comparison" title="Forecast comparison · 2">
+        <svg viewBox="0 0 24 24"><path d="M3 17l5-5 4 2 4-8 5 3M3 8l5 2 4-4 4 6 5-2"/></svg>
+      </button>
+      <button class="rail-button" data-view="curve" aria-label="Futures curve" title="Futures curve · 3">
+        <svg viewBox="0 0 24 24"><path d="M3 5c3 0 3 11 7 11s6-5 11-5M3 3v18h18"/></svg>
+      </button>
+      <button class="rail-button" data-view="factors" aria-label="Latent factors" title="Latent factors · 4">
+        <svg viewBox="0 0 24 24"><path d="M3 7l3 2 3-5 4 6 4-3 4 1M3 18l3-3 3 3 4-5 4 4 4-2M3 12h18"/></svg>
+      </button>
+      <button class="rail-button" data-view="daily" aria-label="Daily forecast" title="Daily forecast · 5">
+        <svg viewBox="0 0 24 24"><circle cx="10" cy="11" r="8"/><path d="M10 6v5l3 2M17 18h6m-3-3 3 3-3 3"/></svg>
+      </button>
+      <span class="rail-spacer"></span>
+      <button id="help-button" class="rail-button" aria-label="Data and model details" title="Data and model details">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/></svg>
+      </button>
+    </nav>
+
+    <main class="chart-workspace">
+      <div class="controls-bar">
+        <label class="dataset-control"><span class="sr-only">Dataset</span><select id="dataset-select" aria-label="Dataset"><option>Loading data…</option></select></label>
+        <span class="control-divider"></span>
+        <label><span>Period</span><select id="split-select" aria-label="Evaluation period"><option value="test">Test</option><option value="validation">Validation</option></select></label>
+        <label><span>Horizon</span><select id="horizon-select" aria-label="Forecast horizon"></select></label>
+        <label><span>Contract</span><select id="rank-select" aria-label="Maturity rank"></select></label>
+        <button id="scale-button" class="button scale-button" aria-label="Toggle log price scale" aria-pressed="false">USD</button>
+      </div>
+
+      <section class="instrument-header" aria-label="Selected instrument">
+        <div>
+          <div class="instrument-title"><span id="instrument-name">Oil futures</span><span id="data-badge" class="demo-badge">SYNTHETIC DEMO</span></div>
+          <div class="quote-line"><span id="last-price" class="last-price">—</span><span id="last-change" class="quote-change">—</span><span id="quote-date" class="quote-date"></span></div>
+        </div>
+        <div class="view-tabs" role="group" aria-label="Chart view">
+          <button class="active" data-view="market" aria-pressed="true">Price</button>
+          <button data-view="forecast" aria-pressed="false">Forecast</button>
+          <button data-view="curve" aria-pressed="false">Curve</button>
+          <button data-view="factors" aria-pressed="false">Factors</button>
+          <button data-view="daily" aria-pressed="false">Daily</button>
+        </div>
+      </section>
+
+      <section id="daily-panel" class="daily-panel" aria-label="Daily forecast review" hidden>
+        <div class="daily-toolbar">
+          <label>Observed date<input id="daily-asof" type="date" aria-label="Daily observation date"></label>
+          <button id="daily-latest" class="button">Latest available</button>
+          <label class="daily-target-control">Next target<input id="daily-target" type="date" aria-label="Next forecast target date"></label>
+          <span id="daily-freshness" class="daily-freshness"></span>
+        </div>
+        <div class="daily-stages">
+          <div><span id="daily-observed-label">Observed settlement</span><strong id="daily-observed">—</strong><small id="daily-contract"></small></div>
+          <div><span>Forecast for the observed date</span><strong id="daily-review-date">—</strong><small id="daily-origin"></small></div>
+          <div><span>Next forecast</span><strong id="daily-next-date">—</strong><small id="daily-calendar"></small></div>
+        </div>
+        <div class="table-scroll"><table class="daily-table"><thead><tr><th>Model</th><th id="daily-prior-heading">Prior forecast</th><th>Error · USD / %</th><th id="daily-next-heading">Next forecast</th></tr></thead><tbody id="daily-rows"></tbody></table></div>
+        <div class="daily-state-row"><span>Updated factors</span><span>One-factor x <strong id="daily-x">—</strong></span><span>Short-term χ <strong id="daily-chi">—</strong></span><span>Long-term ξ <strong id="daily-xi">—</strong></span></div>
+        <p id="daily-parameters" class="daily-note"></p>
+        <p id="daily-note" class="daily-note"></p>
+      </section>
+
+      <div class="chart-caption-row"><span id="chart-heading">Settlement price</span><span id="chart-subtitle"></span></div>
+      <div id="model-toggles" class="model-toggles" role="group" aria-label="Forecast overlays">
+        <span class="observed-key"><i></i> Observed</span>
+        <button data-model="random_walk" aria-pressed="true"><i></i> Random walk</button>
+        <button data-model="one_factor" aria-pressed="true"><i></i> One factor</button>
+        <button data-model="two_factor" aria-pressed="true"><i></i> Two factors</button>
+        <button id="fit-button" class="fit-toggle" aria-pressed="false">Same-day fit</button>
+      </div>
+
+      <div class="main-plot-shell"><div id="main-chart" class="main-chart" aria-label="Main financial chart"></div><div id="chart-empty" class="chart-empty" hidden></div></div>
+
+      <div class="chart-bottom-bar">
+        <div class="range-buttons" role="group" aria-label="Chart time range"><button data-range="1M">1M</button><button data-range="3M">3M</button><button data-range="6M">6M</button><button data-range="1Y" class="active">1Y</button><button data-range="ALL">All</button></div>
+        <button id="reset-chart" class="button text-button">Reset zoom</button>
+        <span id="chart-note" class="chart-note">Daily settlements · USD / barrel</span>
+      </div>
+
+      <section class="lower-panel" aria-label="Supporting analysis">
+        <div class="lower-tabs" role="group" aria-label="Supporting chart"><button data-lower="curve" class="active">Term structure</button><button data-lower="errors">Errors by maturity</button><button data-lower="horizons">Forecast horizons</button><span id="lower-context"></span></div>
+        <div id="lower-chart" class="lower-chart" aria-label="Supporting financial chart"></div>
+      </section>
+    </main>
+
+    <aside class="inspector" aria-label="Contracts and model comparison">
+      <section class="inspector-section contracts-section">
+        <div class="section-heading"><h2>Contracts</h2><span class="small-label">SETTLEMENTS</span></div>
+        <label class="snapshot-control"><span>As of</span><input id="snapshot-date" type="date" aria-label="Curve snapshot date"></label>
+        <div class="table-scroll"><table class="contract-table"><thead><tr><th>Rank</th><th>Last</th><th>Change %</th></tr></thead><tbody id="contract-rows"></tbody></table></div>
+        <div class="mini-definition"><span>Curve shape</span><strong id="curve-shape">—</strong></div>
+        <div class="mini-definition"><span>Back / front spread</span><strong id="curve-spread">—</strong></div>
+      </section>
+
+      <section class="inspector-section model-section">
+        <div class="section-heading"><h2>Model comparison</h2><span id="metric-horizon" class="small-label">1D</span></div>
+        <div class="metric-subtitle">Log-price errors · all maturity ranks</div>
+        <table class="model-table"><thead><tr><th>Model</th><th>RMSE</th><th>MAE</th><th>vs RW</th></tr></thead><tbody id="metric-rows"></tbody></table>
+        <div class="mini-definition"><span>Common scored dates</span><strong id="scored-dates">—</strong></div>
+        <div class="evaluation-window"><label>From<input id="date-start" type="date" aria-label="Evaluation start date"></label><label>To<input id="date-end" type="date" aria-label="Evaluation end date"></label></div>
+        <p class="inspector-note">Positive improvement means lower RMSE than random walk.</p>
+      </section>
+
+      <section id="scenario-section" class="inspector-section" hidden>
+        <div class="section-heading"><h2>Factor scenario</h2><button id="reset-shocks" class="text-button">Reset</button></div>
+        <label class="shock-control">Short-term χ <output id="short-value">0.00</output><input id="short-shock" type="range" min="-0.30" max="0.30" step="0.01" value="0" aria-label="Short-term factor shock"></label>
+        <label class="shock-control">Long-term ξ <output id="long-value">0.00</output><input id="long-shock" type="range" min="-0.30" max="0.30" step="0.01" value="0" aria-label="Long-term factor shock"></label>
+        <p class="inspector-note">Shocks are in log points. The lower chart shows a hypothetical curve, not a forecast.</p>
+      </section>
+
+      <section class="inspector-section data-section">
+        <div class="section-heading"><h2>Dataset</h2><button id="details-button" class="text-button">Details ↗</button></div>
+        <div class="mini-definition"><span>Source</span><strong id="data-source">Simulation</strong></div>
+        <div class="mini-definition"><span>Training through</span><strong id="train-end">—</strong></div>
+        <div class="mini-definition"><span>Observations</span><strong id="observation-count">—</strong></div>
+        <p id="source-note" class="inspector-note">Generated prices. This is a demonstration, not historical WTI performance.</p>
+      </section>
+    </aside>
+  </div>
+
+  <footer class="statusbar"><span><i class="status-dot"></i> <span id="status-text">Loading saved results…</span></span><span>Fixed parameters · Sequential state updates</span><span id="status-period">Commodity Factors</span></footer>
+  <div id="toast" class="toast" role="alert" hidden></div>
+  <dialog id="details-dialog">
+    <div class="dialog-header"><h2>Data & model details</h2><button id="close-dialog" class="button" aria-label="Close details">×</button></div>
+    <div id="details-content"></div>
+    <div class="keyboard-hint">Keyboard: <kbd>1</kbd> Price <kbd>2</kbd> Forecast <kbd>3</kbd> Curve <kbd>4</kbd> Factors <kbd>5</kbd> Daily <kbd>F</kbd> Reset zoom <kbd>L</kbd> Log scale</div>
+  </dialog>
+  <noscript>This workspace requires JavaScript to draw charts and compare saved model results.</noscript>
+</body>
+</html>

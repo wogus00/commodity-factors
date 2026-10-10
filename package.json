@@ -1,0 +1,8 @@
+{
+  "name": "commodity-factors",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:web": "node --test tests/web_core.test.mjs tests/web_remote.test.mjs"
+  }
+}
