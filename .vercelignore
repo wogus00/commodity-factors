@@ -1,7 +1,11 @@
-# Only the browser application is sent to Vercel.
-*
-!web/
+# Ignore project contents and explicitly allow the static app and its build entry point.
+/*
+!web
 !web/**
 !vercel.json
+!scripts
+!scripts/build_web.mjs
+!package.json
+# Local WTI data and exports must never be sent to Vercel.
 web/data/local*
 web/data/wti*

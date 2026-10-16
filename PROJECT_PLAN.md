@@ -1,44 +1,62 @@
-# How Many Factors Does It Take to Model Commodity Futures?
+# Latent Factor Modeling of Crude Oil Futures
 
-**A comparative study of stochastic state-space models and statistical factor models**  
-**Market:** NYMEX WTI light sweet crude oil (CL) futures  
-**Data:** WRDS / LSEG Datastream Futures, daily contract-level settlements, 2021–2025  
-**Target:** a reproducible 3–5 day research prototype, followed by a small Streamlit demo  
+**A study of structural and statistical factors in the futures term structure**
+
+**Market:** NYMEX WTI light sweet crude oil (CL) futures
+
+**Data:** WRDS / LSEG Datastream Futures, daily contract-level settlements, 2021–2025
+
+**Foundation:** the existing data pipeline, state-space models, saved analyses, and dashboards
+
 **Primary reference:** Schwartz, E. & Smith, J. E. (2000), *Short-Term Variations and Long-Term Dynamics in Commodity Prices*, *Management Science* 46(7), 893–911. DOI: https://doi.org/10.1287/mnsc.46.7.893.12034
 
-> **Instructions for Codex:** Treat this document as the project specification. Build a small, testable research repository. Prioritize mathematical correctness, reproducibility, and honest out-of-sample evaluation over features or visual polish. Do not invent empirical results, silently make financial-data assumptions, or push WRDS credentials/data into Git. Work through the implementation tickets below and state any unresolved assumptions.
+> **Instructions for Codex:** Build directly on this repository. Preserve the data pipeline, architecture, working model implementations, and forecasting functionality. Prioritize mathematical validation, reproducibility, and honest factor interpretation. This reframing step changes documentation only: do not implement PCA, alter the Schwartz–Smith equations, or implement wavelets. The roadmap below describes later work, not capabilities or results already delivered. Do not invent empirical results, silently make financial-data assumptions, or commit licensed prices or credentials.
 
 ## 1. Research question and scope
 
-**Question:** How much of the WTI futures term structure can be explained and forecast by one versus two economically motivated latent factors, and how do those models compare with PCA-based statistical factors?
+**Question:** What latent factor structure describes the WTI futures curve, how well does the Schwartz–Smith model reconstruct observed curves, and how does its representation compare with a statistical PCA benchmark?
+
+Research objectives:
+
+1. Estimate and interpret the Schwartz–Smith latent factors driving the WTI futures term structure.
+2. Evaluate structural curve explanation and same-day reconstruction across maturities and time.
+3. Introduce PCA to study factor dimensionality and maturity-dependent loadings.
+4. Compare structural and statistical factors using reconstruction errors, residual diagnostics, and parameter and loading stability.
 
 The Schwartz–Smith framework decomposes log spot prices into a mean-reverting short-term deviation and a persistent long-term equilibrium component. A short-dated futures contract loads relatively heavily on the short-term factor, while a long-dated contract is more sensitive to the equilibrium level.
 
-We will compare three approaches:
+Current and planned approaches:
 
 | ID | Model | Main role |
 |---|---|---|
-| **M1** | One-factor mean-reverting Gaussian/OU term-structure model | Parsimonious economic baseline |
-| **M2** | Two-factor Schwartz–Smith state-space model, estimated with a Kalman filter and maximum likelihood | Core replication/investigation |
-| **M3** | PCA with one and two components | Statistical-factor benchmark |
+| **M1** | Existing Brownian one-factor log-price model | Implemented parsimonious structural baseline |
+| **M2** | Schwartz–Smith state-space model with Kalman filtering and maximum likelihood | Implemented core model; independent validation remains a priority |
+| **M3** | PCA with one and two components, plus a full scree analysis | Planned statistical benchmark; module is currently a placeholder |
+| **RW** | Existing rank-wise random walk; same-contract variant in the daily view | Implemented secondary forecast benchmark |
 
-Two separate questions must be evaluated:
+Separate the following evaluations:
 
-1. **Cross-sectional fit / reconstruction:** Can the model represent the observed curve at time *t* when information from that day is allowed?
-2. **Out-of-sample prediction:** Can the model predict tomorrow's curve using only information available through today?
+1. **Primary modeling evaluation:** factor interpretation, dimensionality, same-day reconstruction, residual structure, and stability.
+2. **Secondary forecasting evaluation:** future-curve predictions using information available only through the forecast origin.
 
 **Do not conflate reconstruction and forecasting.** A PCA reconstruction of the test day's observed curve is *not* a forecast. In-sample fitted Kalman-filter curves are also not the same as one-step-ahead predictions.
 
 ### Initial boundaries
 
-- Use WTI CL only; Brent, natural gas, cross-commodity modeling, options pricing, trading strategies, and the 2025 multi-factor paper are **stretch extensions**, not MVP requirements.
+- Use WTI CL only. Other commodities, options pricing, and trading strategies are outside the current research scope. Wavelets are deferred and are not part of this roadmap.
 - Use six nearest unexpired delivery-month contracts per day for the initial panel, subject to data checks. Expand to longer maturities if useful and well covered.
 - Work with **log settlement prices** and positive-price observations; 2021–2025 avoids the major negative April 2020 front-month episode, but positivity still must be verified.
-- Prefer a small working end-to-end pipeline to a comprehensive but unfinished library.
+- Reuse the existing extraction, preparation, calibration, bundle export, and presentation paths. Add modeling reports incrementally after validation; preserve forecast outputs and commands.
 
-## 2. Data source: verified WRDS discovery
+### Audited implementation status
 
-The WRDS schema `tr_ds_fut` is accessible. Preliminary inspection found:
+`analysis.run_analysis` fits on the calibration period, then builds filtered states, structural reconstructions, and aligned forecasts. `metrics.parquet` currently contains forecast metrics. Expanded reconstruction summaries, residual diagnostics, uncertainty reports, parameter stability studies, and PCA have not been implemented. Existing tests and a saved synthetic demo provide selected checks, not proof of economic identification or parameter recovery.
+
+The notebooks retain exploratory history. In `02_real_data.ipynb`, an early cell assigns the scalar log likelihood to `fitted_log_prices`, which invalidates the following reconstruction error calculation and curve plot until a later cell replaces it with actual fitted curves. Its calibration windows also differ from the saved-analysis workflow. Use the scripts and saved tables as the reproducible foundation; do not treat notebook output as validated modeling evidence.
+
+## 2. Existing data pipeline and maturity conventions
+
+The existing WRDS extraction uses schema `tr_ds_fut`. Earlier source discovery identified:
 
 - `tr_ds_fut.wrds_contract_info`: per-contract identifiers, delivery label and dates; columns include `contrcode`, `futcode`, `dsmnem`, `contrdate`, `lasttrddate`, `sttlmntdate`, `expirationdate`, `exchtickersymb`.
 - `tr_ds_fut.dsfutcontrval`: daily individual-contract prices, keyed by `futcode` and `date_`; columns include `settlement`, `volume`, `openinterest`.
@@ -48,63 +66,65 @@ The WRDS schema `tr_ds_fut` is accessible. Preliminary inspection found:
 
 **Coverage query already executed:** 2021-01-04 through 2025-12-31; **161,354 non-null daily price records**, **193 distinct `futcode` contracts**, **1,256 trading dates** before filtering. These are *coverage counts*, **not** final clean-panel counts or model results.
 
-`lasttrddate` and `sttlmntdate` were populated and equal in the inspected far-dated contract rows; `expirationdate` was null. For the MVP, use `lasttrddate` as the time-to-maturity cutoff, while documenting that futures pricing may conventionally refer to delivery/contract settlement rather than the final trading date. Investigate sensitivity if material.
+`lasttrddate` and `sttlmntdate` were populated and equal in the previously inspected far-dated contract rows; `expirationdate` was null. Preserve `lasttrddate` as the current cutoff proxy. Futures pricing may refer to delivery/contract settlement rather than the final trading date; investigate this sensitivity before assigning an economic interpretation to maturity effects.
 
-### Expected tidy dataset
+### Current panel schema
 
 | column | definition |
 |---|---|
-| `date` | market observation/trading date |
+| `date_` | market observation/trading date |
 | `futcode` | unique Datastream futures contract ID |
-| `contract_label` | Datastream mnemonic / delivery month (`dsmnem`, `contrdate`) |
-| `last_trade_date` | final trading date from metadata |
+| `dsmnem`, `contrdate` | Datastream mnemonic / delivery month |
+| `lasttrddate` | final trading date from metadata |
 | `settlement` | observed daily settlement price, USD per barrel (confirm vendor convention) |
-| `volume`, `open_interest` | optional liquidity diagnostics |
-| `tau` | `(last_trade_date - date).days / 365.25` |
+| `volume`, `openinterest` | optional liquidity diagnostics |
+| `tau` | `(lasttrddate - date_).days / 365.25` |
 | `maturity_rank` | 1 = nearest unexpired listed contract on that date |
 | `log_settlement` | natural logarithm of positive `settlement` |
 
-### WRDS extraction (reference SQL)
+### WRDS extraction and preparation
 
 Use **parameterized SQL**, since `%` wildcard characters in literal SQL strings previously caused a SQLAlchemy/WRDS driver error in this environment.
 
 ```python
 sql = """
 SELECT
-    p.date_ AS date,
+    p.date_,
     p.futcode,
-    c.dsmnem AS contract_label,
+    c.dsmnem,
     c.contrdate,
-    c.lasttrddate AS last_trade_date,
+    c.lasttrddate,
     p.settlement,
     p.volume,
-    p.openinterest AS open_interest
+    p.openinterest
 FROM tr_ds_fut.dsfutcontrval AS p
 JOIN tr_ds_fut.wrds_contract_info AS c
     ON p.futcode = c.futcode
 WHERE c.contrcode = %(contrcode)s
-  AND p.date_ BETWEEN %(start_date)s AND %(end_date)s
-  AND c.lasttrddate > p.date_
-  AND p.settlement > 0
+  AND p.date_ BETWEEN %(start)s AND %(end)s
 ORDER BY p.date_, c.lasttrddate
 """
 params = {
     "contrcode": 1986,
-    "start_date": "2021-01-01",
-    "end_date": "2025-12-31",
+    "start": "2021-01-01",
+    "end": "2025-12-31",
 }
 raw = db.raw_sql(sql, params=params)
 ```
 
-**Important engineering checks:**
+`scripts/download_wrds.py` saves raw rows. `data.prepare_panel` cleans dates and positive prices, rejects conflicting contract/date duplicates, computes maturity and log settlement, selects nearby contracts, and requires a complete ordered panel. Dates with insufficient eligible contracts fail validation; a wholly absent session cannot be detected from the panel alone. Cleaning currently reports final panel coverage rather than a full ledger of excluded rows.
+
+`prepare_kalman_data` pivots log settlements and `tau` by maturity rank, preserving chronological order and computing actual date gaps in calendar years. The Databento adapter supplies a separate provider history through the same panel interface; WRDS and Databento histories remain separate. The live path also uses a settlement calendar and records same-contract forecasts without recalibration.
+
+**Data checks to retain or extend:**
 
 1. Verify the metadata table contains exactly one relevant row per `futcode`; otherwise a join can inflate counts. Fail visibly on unexpected duplicates; do not silently drop them.
 2. Check uniqueness of `(date, futcode)` after joining.
-3. Check `date < last_trade_date`, nonnull dates and prices, strictly positive prices, and `tau > 0`.
-4. Sort by `date`, `last_trade_date`, and a deterministic contract tie-breaker; rank contracts within each date. Select ranks 1–6 **after** filtering invalid/unexpired contracts.
-5. Count trading dates with 0–5 valid nearby contracts. Choose and document a deterministic missing-data policy (prefer retaining days with all six contracts for the first prototype; later allow missing observation rows in the Kalman filter).
+3. Check `date_ < lasttrddate`, stable expiry metadata for each contract, nonnull dates and prices, strictly positive prices, and consistency of `tau` with those dates.
+4. Sort by `date_`, maturity, and a deterministic contract tie-breaker; select ranks 1–6 after filtering invalid/unexpired contracts. Report when a missing near-month quote causes a more distant contract to enter the WRDS panel.
+5. Report excluded rows and incomplete or missing sessions against a documented calendar. Preserve the current complete-panel policy; missing-maturity support is future work.
 6. Inspect extreme day-to-day jumps, stale settlements, contract roll transitions, and unexpectedly low-volume far contracts. Avoid treating a change in front-month contract identity as a spot return.
-7. Confirm at least one real futures-curve plot from sample dates before modeling.
+7. Inspect representative real curves and maturity coverage before interpreting fitted factors.
 8. Store a clean long-form Parquet and optionally a wide-by-rank log-price matrix for PCA. Preserve `tau` and `futcode` in the long dataset.
 
 **Do not commit licensed WRDS price data, downloaded raw files, `.env`, or credentials to a public repository.** Provide a WRDS extraction script and a synthetic/demo-data path so other users can reproduce the code without WRDS access.
@@ -185,6 +205,8 @@ V(\tau)=\frac{\sigma_\chi^2}{2\kappa}(1-e^{-2\kappa\tau})
 
 Here `mu_P` governs the physical filtering transition, while `mu_Q` and `q_chi` govern the pricing curve; the differences represent risk adjustments. The `0.5 * V(tau)` term is the lognormal convexity adjustment and **must not be omitted** from a risk-neutral pricing implementation.
 
+The existing code uses the equivalent conventions `mu_P = mu_xi`, `mu_Q = mu_xi - lambda_xi = delta`, and `q_chi = -lambda_chi`. Document and validate this sign mapping against the primary paper; the reframing does not change these equations.
+
 For `m_t` observable maturities, the Kalman observation system is
 
 \[
@@ -195,251 +217,225 @@ For `m_t` observable maturities, the Kalman observation system is
  (\mathbf a_t)_j=A(\tau_{t,j}).
 \]
 
-Start with `R = sigma_obs**2 * I` (an estimated scalar noise variance). A diagonal maturity-specific `R` is an optional robustness extension. Model log settlements; do not use price-level noise with log observations.
+The current filter uses `R = sigma_epsilon**2 * I`, with scalar log-price noise estimated during calibration. Maturity-specific or correlated observation noise is a future robustness study, not the current specification.
 
-**Identification warning:** Futures quotes alone may weakly identify some combinations of physical drift and risk premiums. The original paper discusses identification/robustness limitations. For the first working version, **fix `q_chi = 0`** and estimate `mu_Q`, recording this as an explicit restriction. Add `q_chi` only after testing parameter identifiability and optimization stability. Do not claim that a restricted calibration reproduces all original paper parameter estimates. If `mu_P` is poorly identified, report that rather than forcing plausible-looking parameter values.
+**Identification warning:** Futures quotes alone may weakly identify some combinations of physical drift and risk premiums. The main saved-analysis calibration fixes `lambda_chi = 0`, equivalent to `q_chi = 0`. Preserve this restriction for the main comparison. The legacy notebook estimator allows an unrestricted `lambda_chi`; do not mix its estimates with the restricted workflow. The short maturity span of the six nearby contracts can limit separation of χ and ξ. Report identification and sensitivity rather than assuming precise economic estimates or replication of the paper's empirical results.
 
 ### 3.3 Kalman filter and maximum likelihood
 
-Implement the linear Gaussian filter with time-varying `H_t`, `a_t`, `G_t`, and `Q_t`:
+The two-factor filter uses time-varying `H_t`, `a_t`, `G_t`, and `Q_t`. Validate each step independently:
 
 1. Predict state mean/covariance using `G_t`, `d_t`, `Q_t`.
 2. Compute the **predicted** observation mean `H_t x_{t|t-1} + a_t`.
 3. Compute innovation and `S_t = H_t P_{t|t-1} H_t.T + R_t`.
 4. Accumulate multivariate Gaussian predictive log likelihood using Cholesky solves, not matrix inversion.
 5. Update state and covariance with a numerically stable covariance formula (Joseph form or verified equivalent).
-6. Support variable `delta_t` and ideally missing maturities without imputing test-day prices.
+6. Verify irregular gaps and causal information use. Missing maturities are currently rejected; future support must not impute evaluation-day prices.
 
-Estimate parameters by minimizing negative innovation log likelihood on the **training period only** with `scipy.optimize.minimize`. Constrain positive parameters by `exp`/`softplus` and correlation by `tanh`; report actual units and optimization diagnostics. Use multiple initializations if the objective is nonconvex.
+The existing MLE uses bounded `L-BFGS-B` on calibration observations only. `run_analysis` uses two deterministic two-factor starting points, fixes `lambda_chi=0`, selects the highest finite likelihood among successful fits, and stops if calibration fails. The one-factor estimator uses one start. Assess start sensitivity, active bounds, gradients, and parameter uncertainty before drawing economic conclusions; optimizer success alone is insufficient.
 
-Initialize the short-run factor using its stationary variance `sigma_chi^2/(2*kappa)`; use a documented diffuse or estimated prior for the nonstationary long-run factor. Initialization sensitivity should be tested. Never reset the Kalman state across normal consecutive dates or implicitly peek at the next observation.
+The current two-factor default initializes `[chi, xi] = [0, mean(first_log_curve)]` and `P0 = diag(0.1, 0.1)`. The first curve is then also used in an innovation likelihood contribution. Audit this data-dependent initialization and first-day likelihood treatment. Compare a documented conditional or diffuse initialization, including the stationary short-factor variance `sigma_chi^2/(2*kappa)`, before proposing estimator changes. Never reset states across consecutive sessions or use future observations in filtering.
 
-Save both filtered states `x_{t|t}` (diagnostics, reconstruction) and **one-step predictive** states/curves `x_{t|t-1}` (honest prediction).
+The filter returns prior and filtered means, filtered covariances, innovations, and per-date likelihoods. Saved bundles retain filtered means, reconstruction tables, forecast tables, and per-date likelihoods, but do not persist covariance paths or innovation covariance matrices. Expanded uncertainty and whitened-innovation reports will need those outputs. Kalman step functions are reusable, but the full `kalman_filter` loop is specific to Schwartz–Smith; the one-factor filter has a separate loop.
 
-## 4. Model M1 — one-factor baseline
+## 4. Existing one-factor and random-walk baselines
 
-Use a simple **economically coherent one-factor log-price OU**:
+Preserve the implemented one-factor model in `one_factor.py`:
 
-\[
- dX_t=\kappa_1(\theta_P-X_t)dt+\sigma_1 dW_t^P,
- \qquad \log S_t=X_t.
-\]
+- State transition: `x[t] = x[t-1] + mu * dt + eta[t]`, with process variance `sigma**2 * dt`.
+- Log futures observation: `y[t,j] = x[t] + (delta + 0.5 * sigma**2) * tau[t,j] + epsilon[t,j]`.
+- Scalar log-price measurement noise, bounded MLE, and a Joseph-form covariance update.
 
-Under a risk-neutral OU with mean `theta_Q`, the futures price is
+This is a Brownian log-price term-structure model, not the OU baseline from the original project proposal. Retain its reconstructions and forecasts as the existing comparison. An OU alternative may be evaluated later as a separately named model after validation; it is not implemented in this step.
 
-\[
- \log F(t,T)=\theta_Q+(X_t-\theta_Q)e^{-\kappa_1\tau}
- +\frac{\sigma_1^2}{4\kappa_1}(1-e^{-2\kappa_1\tau}).
-\]
+The random walk repeats the origin's rank-wise log curve in the main backtest. The daily view instead follows contract identity and needs that contract's previous quote. Random walk is a forecast benchmark, not a fitted latent factor reconstruction.
 
-The exact physical transition uses `theta_P + (X_prev-theta_P)*exp(-kappa_1*delta)`, with variance `sigma_1^2*(1-exp(-2*kappa_1*delta))/(2*kappa_1)`. Estimate with the same Kalman/MLE machinery and comparable measurement noise assumptions. Do **not** substitute a naive single time-series OU on front-month returns for a genuine futures-curve model.
+## 5. Planned PCA benchmark for dimensionality and reconstruction
 
-This is a useful structural baseline, though it is not the unique possible nested restriction of the two-factor framework; describe it accurately rather than claiming formal nesting.
+`pca_baseline.py` is currently a placeholder. The following methodology is planned; this documentation update does not implement it. Fit PCA on calibration log settlement levels, with six columns representing maturity ranks 1–6.
 
-## 5. Model M3 — PCA benchmarks
-
-Fit PCA on the **training sample only**, using six columns representing *maturity rank* 1 through 6 of `log_settlement`.
-
-- Fit training mean and PCA loadings using training days only; retain `K = 1` and `K = 2` components.
-- Report explained-variance ratios and reconstruction errors, clearly labeled as **same-day reconstruction**.
-- To make an **out-of-sample forecasting** benchmark, fit a simple `VAR(1)` or separate `AR(1)` models to the training PCA scores; forecast next-day scores from information available at `t-1`; map forecast scores back through the fixed PCA loadings and training mean.
-- As an additional sanity check, include the **random-walk/no-change forecast**: tomorrow's observed rank-wise log curve equals today's rank-wise log curve.
+- Center each rank using its calibration-period mean. The primary analysis uses covariance PCA without variance standardization; standardized PCA and changes in log prices are separate sensitivity analyses with a different interpretation.
+- Compute the full scree and cumulative explained-variance curves, and compare `K = 1` and `K = 2` reconstructions. Do not assert in advance that two components suffice.
+- Hold centering and loadings fixed on validation/evaluation dates. Project each current curve onto those loadings and reconstruct it as the training mean plus its retained component contribution. These scores use current-day observations and are not forecasts.
+- Plot rank-dependent loadings and score histories, and evaluate reconstruction errors on the identical dates/ranks used by M1/M2.
+- Record component sign conventions, scale, and sensitivity to close eigenvalues. Compare structural loading patterns and factor subspaces as well as score/state correlations; PCA components need not equal χ and ξ.
 - Because maturity-rank columns roll at expiration, the PCA panel does not represent perfectly fixed maturities. Explicitly disclose this and consider interpolating to common fixed time-to-maturity nodes in a later extension. No interpolation using future dates.
 
-For all comparisons, label whether the target is a contract identifier, maturity rank, or constant-maturity curve. Mixing these targets invalidates a forecast comparison.
+Structural loadings depend on each observed `tau`; PCA loadings are fixed coefficients on rolling rank columns. Compare them on explicitly aligned maturity support, and label whether an analysis uses contract identity, maturity rank, or a constant-maturity grid.
 
-## 6. Experiment design and evaluation
+AR/VAR score forecasting is an optional later extension. It is not required for the primary PCA reconstruction benchmark and must not substitute current-day scores for prior forecasts. Existing structural and random-walk forecasts remain available independently.
 
-### 6.1 Time split
+## 6. Planned modeling evaluation
 
-Initial fixed chronological split:
+### 6.1 Calibration and evaluation windows
 
-- **Train:** 2021-01-01 to 2023-12-31.
-- **Validation:** 2024-01-01 to 2024-12-31 (numerical/debugging and model decisions).
-- **Final test:** 2025-01-01 to 2025-12-31 (holdout; report only after decisions are fixed).
+Preserve the current chronological split for the main fixed-calibration study:
 
-Fit all parameter estimates, PCA transforms, scaling, observation-noise specifications, and baseline score dynamics without test-period information. On validation/test, **hold fitted parameters fixed**. For a rolling one-day-ahead prediction, allow sequential state updating *after* each day's observation becomes available, but never before scoring that day's prediction.
+- **Calibration / train:** 2021-01-01 to 2023-12-31.
+- **Validation:** 2024-01-01 to 2024-12-31, for numerical checks and method choices.
+- **Evaluation / existing test label:** 2025-01-01 to 2025-12-31. This period was already explored in the notebooks and must not be described as an untouched holdout.
 
-### 6.2 Primary metrics
+Fit structural parameters, PCA centering/loadings, and any scaling or benchmark dynamics on calibration data only. Keep them fixed for the main validation/evaluation. Current-day curves may update structural filtered states or PCA scores to reconstruct that day; this is reconstruction under fixed calibration, not a future-price prediction. For forecasting, score the prior prediction before updating with the target observation.
 
-- **One-day-ahead log-price RMSE / MAE** across all scored maturities.
-- **Per-maturity-rank RMSE / MAE**; short end vs long end.
-- **Predictive log likelihood** for probabilistic state-space models (compare M1 with M2; do not pretend deterministic PCA provides this unless you explicitly add an error distribution).
-- **Same-day reconstruction RMSE** reported separately.
-- Optional: price-level absolute errors, sample curves on representative dates, residual correlations, forecast bias.
+Any retrospective full-sample fit or rolling/subperiod recalibration must be separately labeled with its actual calibration window. A stability refit is a different experiment from the existing fixed-parameter backtest and must not silently replace its saved parameters or results.
 
-For fair headline comparisons, use a *common sample* of dates and the same six ranked observations. If one model predicts an individual contract and another predicts ranked maturities, align the target and say how the roll is treated. Consider an alternative evaluation only on contracts present on both consecutive dates, to isolate genuine same-contract price changes from contract-roll discontinuities.
+### 6.2 Reconstruction and dimensionality
 
-Do not declare a model superior just because PCA reconstructs curves better in sample. Include measurement noise, estimation uncertainty, likelihood diagnostics, and sensitivity to time split and maturity selection.
+For structural models, compute `fitted_log = H_t @ filtered_state + A(tau_t)` using each model's existing observation equation. For planned PCA, compute the training mean plus the retained score/loading contribution. Define reconstruction residuals as `observed_log - fitted_log` for both approaches.
 
-### 6.3 Synthetic verification (before empirical claims)
+- Report pooled and per-rank log-price RMSE, MAE, and mean residual for calibration, validation, and evaluation separately, with observation counts and a common scoring sample.
+- Inspect residuals against actual `tau` as well as maturity rank. Include representative observed/fitted curves and errors through time, with roll dates identified.
+- Report dollar errors from exponentiated fitted log values as a supplementary descriptive measure. Do not call them conditional price means or use them as a forecast evaluation.
+- Report PCA explained-variance ratios, cumulative variance, and scree plots from the calibration sample. Held-period reconstruction error is a separate measure; any explained-variance statistic on evaluation data must state its definition.
+- Compare one-factor, two-factor, one-PC, and two-PC representations without presuming that more factors are economically correct or that training fit establishes superiority.
 
-Generate state trajectories with the **exact transition covariance** and generate curves with the **same observation model**; then test:
+### 6.3 Residual and innovation diagnostics
 
-- Deterministic special cases for `kappa`, `rho = 0`, zero/very small noise, and irregular `delta`.
-- Exact covariance matrices are symmetric positive semidefinite (subject to numerical tolerance).
-- With known parameters, the Kalman innovation statistics are approximately calibrated over sufficiently long simulations.
-- The estimator recovers *well-identified* synthetic parameters within realistic uncertainty across multiple seeds. Do not promise perfect recovery of weakly identified risk-premium parameters.
-- Generate a two-factor system with meaningful factor variation and check whether M2 can improve test forecasts/likelihood over M1; also generate one-factor data to test whether M2 overfits.
-- Run a small Monte Carlo (`~10–30` seeds for MVP; more later) and show variability, not just a single favorable seed.
+Reconstruction residuals use observations already assimilated into the state or score. Kalman innovations use the prior curve before assimilation. Analyze these quantities separately:
 
-The synthetic exercise tests code correctness and model discriminability, **not** whether the empirical WTI market truly has exactly two factors.
+- For reconstruction residuals, report maturity-specific mean, variance, autocorrelation, cross-maturity correlation, tail behavior, and dates with large curve errors.
+- For predictive innovations, inspect mean, autocorrelation, covariance, and Gaussian calibration. Whiten with the Cholesky factor of the innovation covariance `S_t`, not with the measurement-noise variance alone.
+- Interpret innovation calibration after accounting for initialization and parameter estimation. Do not apply a predictive white-noise expectation automatically to filtered reconstruction residuals.
+- Compare M1/M2 one-step predictive likelihood on common dates. Deterministic PCA reconstruction has no directly comparable predictive likelihood without an explicit stochastic model.
 
-## 7. Deliverables and visualizations
+The current bundles do not contain whitened innovations or their covariance matrices; producing these reports is future implementation work.
 
-**Minimum research deliverables:**
+### 6.4 Factor interpretation and stability
 
-1. A reproducible WRDS-to-Parquet data loader and validated WTI curve panel.
-2. Exact two-factor simulation and Kalman-filter implementation, with tests.
-3. M1/M2 likelihood estimation and fixed-parameter one-day-ahead predictions.
-4. One-/two-component PCA and random-walk forecast baselines.
-5. Results table and plots separating reconstruction from forecasting, with clear train/validation/test labels.
-6. README explaining model assumptions, data access, setup, and commands.
+- Plot estimated χ and ξ, their maturity loadings, and hypothetical factor shocks with fixed parameters. Report short-factor half-life and uncertainty only after mathematical validation and estimation diagnostics support them.
+- Compare PCA scores and structural states on aligned dates, with explicit sign/scale conventions. Compare loading vectors and subspaces; close PCA eigenvalues can make individual loading vectors unstable even when the subspace is stable.
+- Evaluate structural parameter sensitivity to optimizer starts, initial state/covariance, calibration windows, and maturity coverage. Record convergence, active bounds, objective values, and uncertainty or profile-likelihood results where available.
+- Study rolling or subperiod parameter estimates and PCA loading/subspace stability as separately labeled refit experiments. Preserve the original fixed-calibration analysis.
+- Treat associations with market episodes as descriptive evidence, not causal identification. Futures prices do not reveal the true latent states.
 
-**Streamlit app — only after core models are working:**
+### 6.5 Secondary forecast evaluation
 
-- Historical futures curves for chosen dates, observed vs model-predicted/fitted.
-- Filtered `chi` and `xi` states over time, labelled as **estimated latent states** rather than ground truth.
-- Per-maturity forecast-error comparison for M1/M2/PCA/no-change.
-- Interactive **hypothetical** factor shocks and the resulting futures-curve response (do not present counterfactuals as forecasts).
-- Optional: slider for mean-reversion `kappa` and short-/long-factor volatility; keep displayed parameters consistent with actual model formulas.
+Preserve rank-wise forecasts at horizons of 1, 5, and 20 trading observations, pooled and per-rank log RMSE/MAE, price-median errors, and one-step state-space predictive likelihood. Forecast origins start at or after calibration completion; longer horizons can have fewer early validation targets. All models within a horizon must share the same dates and target ranks.
 
-A dashboard is presentation, **not** evidence that the model is validated.
+Keep the daily same-contract forecasts and immutable issuance records. Label same-contract and rank-based targets explicitly, particularly around rolls. Reconstruction quality and forecast accuracy answer different questions; neither alone identifies an economic factor.
 
-## 8. Recommended repository layout
+### 6.6 Synthetic verification before factor interpretation
 
-```text
-commodity-futures-factors/
-├── README.md
-├── PROJECT_PLAN.md
-├── pyproject.toml
-├── .gitignore
-├── configs/
-│   └── default.yaml
-├── data/
-│   ├── raw/                  # ignored: licensed WRDS data
-│   ├── processed/            # ignored: licensed WRDS data
-│   └── synthetic/            # small generated samples can be committed
-├── src/commodity_factors/
-│   ├── __init__.py
-│   ├── data.py               # WRDS pull, contracts, panel validation
-│   ├── simulation.py         # exact synthetic SDE transitions
-│   ├── schwartz_smith.py     # M2 G, Q, H, A formulas
-│   ├── one_factor.py         # M1 physical transition and futures equation
-│   ├── kalman.py             # generic linear Gaussian Kalman filter
-│   ├── estimation.py         # constrained MLE and diagnostics
-│   ├── pca_baseline.py       # PCA fit, score forecasts
-│   ├── evaluation.py         # aligned forecast targets and metrics
-│   └── plotting.py
-├── scripts/
-│   ├── download_wrds.py
-│   ├── prepare_panel.py
-│   ├── run_synthetic.py
-│   └── run_empirical.py
-├── tests/
-│   ├── test_data.py
-│   ├── test_state_space.py
-│   ├── test_kalman.py
-│   └── test_no_leakage.py
-├── results/                  # generated metrics/figures
-└── app.py                    # optional Streamlit app
-```
+Verify the formulas independently before relying on simulations generated by those same functions. Then simulate exact state dynamics and the observation model to test:
 
-Suggested stack: Python 3.11+, NumPy, pandas, SciPy, scikit-learn, matplotlib/plotly, PyArrow, pytest, PyYAML, WRDS, and Streamlit (dashboard only). Avoid major new dependencies unless necessary.
+- Transition and pricing limiting cases, zero correlation, correlated shocks of both signs, small maturities/gaps, and irregular calendar gaps. Distinguish mathematical zero-noise limits from filter APIs requiring positive noise.
+- Symmetry and positive-semidefiniteness of process and state covariances, and agreement of Gaussian likelihood and posterior updates with independent calculations.
+- State recovery, reconstruction error, covariance behavior, and sensitivity to first-day initialization and likelihood treatment.
+- Innovation calibration under known parameters after a documented initialization period.
+- Recovery of well-identified synthetic parameters across multiple seeds, with explicit uncertainty and optimizer failures. Do not promise recovery of weakly identified drifts or risk premiums.
+- One-factor and two-factor data-generating systems to study factor discrimination and overfitting. After PCA exists, assess its recovered dimensionality and subspace on these controlled data.
+- A modest Monte Carlo study of approximately 10–30 seeds, reporting variability and failure rates rather than a single favorable run.
 
-## 9. Work tickets for Codex
+The current single-seed demo is not this validation study. Synthetic verification tests numerical correctness and model discrimination; it cannot establish that empirical WTI has exactly two factors.
 
-Each ticket should yield code, tests, documentation, and a short summary of assumptions. **Do not start the next ticket if the current ticket's tests fail.**
+## 7. Planned research deliverables and presentation
 
-### Ticket A — WRDS extraction and validation (priority 1)
+1. A mathematical validation report for the existing Schwartz–Smith equations, Kalman filter, initialization, and MLE, supported by independent numerical checks.
+2. Data-quality and maturity-convention documentation built on the current WTI panel pipeline.
+3. Structural factor trajectories, loadings, uncertainty where available, and same-day reconstruction tables and plots.
+4. A training-fitted PCA benchmark with scree analysis, scores, loadings, and one-/two-component reconstructions.
+5. Common-sample structural/PCA reconstruction metrics, residual and innovation diagnostics, and parameter/loading stability studies.
+6. The existing forecasting workflow retained and clearly labeled as secondary.
 
-**Input:** this plan, working local WRDS login, metadata discovered above.  
-**Implement:** `data.py`, `scripts/download_wrds.py`, `scripts/prepare_panel.py`, `test_data.py`.  
-**Acceptance checks:** distinct `(date, futcode)` keys; contract family 1986; correct expiry logic; six sorted nearby contracts where available; logged exclusion counts; no false assumption of 7,536 clean observations; data excluded from version control.  
-**Output:** local Parquet, data-quality report, and a basic curve plot.
+The browser and Streamlit dashboards already consume saved analyses. Preserve historical curves, fitted curves, filtered factors, hypothetical shocks, and forecast/daily views. Later add modeling reports and PCA presentation after validated outputs exist. Do not trigger WRDS queries or MLE on control changes. A dashboard presents results; visual polish does not establish mathematical validity or identification.
 
-**Prompt to give Codex:**
+## 8. Existing architecture to reuse
 
-> Read `PROJECT_PLAN.md`, especially Sections 2 and 9. Implement only Ticket A. Use the existing WRDS Datastream Futures tables and CL `contrcode=1986`. Validate metadata join cardinality and curve construction. Produce a concise data-quality report, tests, a minimal CLI, and README usage. Do not fabricate data or commit licensed market prices. Ask for a credential only when needed at execution time; never hard-code one.
+| Layer | Files | Reuse and planned extension |
+| --- | --- | --- |
+| Acquisition and panel | `scripts/download_wrds.py`, `scripts/prepare_panel.py`, `data.py` | Preserve contract-level ingestion, maturity convention, validation, and matrix preparation |
+| Structural model math | `schwartz_smith.py`, `one_factor.py`, `simulation.py`, `demo.py` | Validate existing equations and simulation; retain the implemented one-factor baseline |
+| Filtering and estimation | `kalman.py`, `estimation.py` | Reuse filtering and MLE; audit initialization, uncertainty, and identification |
+| Analysis and artifacts | `analysis.py`, `scripts/run_empirical.py`, `scripts/run_synthetic.py` | Preserve `AnalysisBundle`, Parquet/JSON outputs, fixed-calibration analysis, and forecast tables; extend modeling reports later |
+| Forecast applications | `evaluation.py`, `daily.py`, `daily_update.py`, `scripts/update_daily.py` | Preserve horizon propagation, common targets, same-contract reviews, and issued forecasts |
+| Live ingestion/publication | `live_feed.py`, `live_update.py`, `settlement_calendar.py`, `blob_store.py`, `scripts/live_daily.py` | Preserve provider separation, calendar checks, and saved-history publication |
+| Presentation/export | `app.py`, `web/`, `web_bundle.py`, `scripts/export_web_bundle.py` | Reuse saved-result consumers and views; add modeling presentation after reports exist |
+| Statistical benchmark/plots | `pca_baseline.py`, `plotting.py` | Both are placeholders; add PCA and shared modeling plots in later tickets |
+| Tests and automation | `tests/`, `.github/workflows/` | Retain data, math, leakage, app, daily, and browser checks; extend independent mathematical and modeling coverage |
 
-### Ticket B — exact state-space math and synthetic simulation (priority 2)
+Each existing bundle contains `panel.parquet`, `predictions.parquet`, `reconstructions.parquet`, `states.parquet`, `metrics.parquet`, and `metadata.json`. Future artifact extensions need explicit schemas and compatibility with both dashboards; this step changes no files in that pipeline.
 
-**Implement:** `schwartz_smith.py`, `one_factor.py`, `simulation.py`, and unit tests.  
-**Acceptance checks:** equations match Sections 3–4; exact irregular-time transition; correlated shocks; correct risk-neutral convexity term; positive-semidefinite covariance; reproducible seeded simulation.
+Keep the existing Python scientific stack and static JavaScript frontend. Avoid new dependencies or a wholesale architecture rewrite for the research reframing.
 
-**Prompt to give Codex:**
+## 9. Implementation roadmap after this documentation step
 
-> Read `PROJECT_PLAN.md`. Implement only Ticket B: pure NumPy/SciPy state-space matrices and reproducible synthetic simulation for M1 and M2. Test exact transition means/covariances, risk-neutral observation equations, irregular date gaps, and correlated shocks. Keep the formulas explicit and documented. Do not perform empirical estimation or build a dashboard.
+These tickets replace the original build-from-scratch sequence. The pipeline and dashboards already exist. Do not proceed past unresolved mathematical failures, and report incomplete checks without claiming validation. No ticket implements wavelets.
 
-### Ticket C — Kalman filter and maximum-likelihood estimation (priority 3)
+### Ticket A — independent Schwartz–Smith and Kalman validation (next priority)
 
-**Implement:** `kalman.py`, `estimation.py`, likelihood and recovery tests.  
-**Acceptance checks:** innovations likelihood computed stably; time-varying maturity observation matrix; no covariance blow-ups; positive parameter constraints; train-only estimation; fixed parameters during holdout; diagnostic optimizer logs.
+**Scope:** the existing `schwartz_smith.py`, `kalman.py`, `estimation.py`, simulation functions, and their tests.
 
-**Prompt to give Codex:**
+**Work:**
 
-> Implement Ticket C in `PROJECT_PLAN.md` on top of Tickets A–B. Write a generic stable Kalman filter for time-varying observation matrices and irregular observation gaps. Optimize training-only negative innovation log likelihood with constrained parameters and multiple starting points. Begin with `q_chi=0` and isotropic measurement noise, disclose weak identification, and test against synthetic data. Expose both prior predictive and posterior filtered curves without confusing them.
+1. Derive and independently check the physical transition, correlated process covariance, observation loadings, risk-neutral sign conventions, and convexity adjustment against the primary paper.
+2. Validate irregular gaps, covariance composition across successive intervals, symmetry/positive-semidefiniteness, and small-gap/maturity limits. Use independently computed expectations or numerical integration so tests do not simply call the same formula twice.
+3. Compare likelihood, gain, posterior mean, and Joseph covariance updates with independent Gaussian calculations, including low-noise and numerically difficult admissible cases.
+4. Audit the data-dependent first-curve initialization, first-day likelihood contribution, and sensitivity to `x0`/`P0`. Clearly distinguish current behavior from candidate alternatives.
+5. Check known-parameter innovation calibration and state recovery; perform a modest multi-seed MLE recovery/sensitivity study and record bounds, failed starts, and weakly identified parameters.
+6. Preserve the existing causal state updates, calibration split, forecast targets, and bundle compatibility.
 
-### Ticket D — PCA, prediction evaluation, and plots (priority 4)
+**Acceptance:** a reproducible report distinguishing confirmed formulas, test coverage, numerical limitations, initialization issues, and identification limits. Propose fixes only for demonstrated discrepancies; do not silently change equations or claim successful parameter recovery.
 
-**Implement:** `pca_baseline.py`, `evaluation.py`, `scripts/run_empirical.py`, basic figures.  
-**Acceptance checks:** chronological split; PCA fit and any normalization fit train-only; one-step-ahead PCA score forecasts; fair common-date/model comparisons; RMSE by maturity; reconstruction distinct from prediction; no-peek tests.
+### Ticket B — structural reconstruction and residual reporting
 
-**Prompt to give Codex:**
+**Scope:** build modeling reports from existing panel, state, and reconstruction outputs.
 
-> Implement only Ticket D of `PROJECT_PLAN.md`. Fit 1- and 2-PC PCA on training log settlements, forecast PCA scores with a simple AR(1)/VAR(1), and include a no-change baseline. Compare one-step-ahead predictions with M1/M2 on exactly aligned dates and maturity ranks. Report both pooled and by-rank RMSE, clearly separate reconstruction from forecasting, generate clean plots/tables, and add leakage tests. Never fit PCA on test data.
+**Acceptance:** pooled/per-rank log RMSE, MAE, and bias; curve examples; residual diagnostics; separately identified predictive innovations and their covariance standardization. Add uncertainty outputs only with a documented schema and verified filter covariance paths. Forecast metrics and issued records remain available.
 
-### Ticket E — Streamlit showcase (priority 5 / optional)
+### Ticket C — PCA dimensionality and reconstruction benchmark
 
-**Implement:** `app.py` consuming **saved, validated outputs**; never re-run costly WRDS queries or full MLE on widget changes.  
-**Acceptance checks:** curve charts, latent states, comparison table, factor-shock slider; sensible defaults and labels; deterministic demo mode using synthetic data; no secrets in the frontend.
+**Scope:** implement the planned methodology in Section 5 on the existing rank panel.
 
-**Prompt to give Codex:**
+**Acceptance:** calibration-only centering/loadings, full scree analysis, one-/two-PC reconstructions and scores, loading plots, explicit sign/scale conventions, and common-sample reconstruction metrics. Tests must verify that changing evaluation prices cannot change the fitted transform. Current-day evaluation prices may change their reconstruction scores. PCA forecasting is optional later work.
 
-> Implement only Ticket E. Build a minimal Streamlit research dashboard from already-generated result files, with a synthetic demo mode so it works without licensed WRDS data. Show observed vs predicted curves, filtered latent states, per-maturity forecast comparisons, and hypothetical short-/long-factor shocks. Do not claim fitted states are observed truth or imply that reconstruction is an out-of-sample prediction. Prioritize correctness and clarity.
+### Ticket D — factor comparison, stability, and presentation
 
-## 10. Suggested execution order (3–5 focused days)
+**Scope:** align structural and PCA outputs, run separately labeled sensitivity/refit experiments, and present saved modeling reports.
 
-| Day | Primary objective | Done when... |
-|---|---|---|
-| 1 | Ticket A and contract-curve visualization | validated six-nearby WTI panel available locally |
-| 2 | Ticket B + core Kalman mechanics | exact-model/synthetic tests pass |
-| 3 | Ticket C + initial M2/M1 calibration | finite log likelihood; parameter diagnostics; one-step forecasts |
-| 4 | Ticket D + robustness | leakage-free held-out comparison table and plots |
-| 5 | Ticket E + README/polish (if time) | demo runs from saved outputs without WRDS connection |
+**Acceptance:** loading/subspace and score/state comparisons with ambiguity disclosed, structural parameter and PCA stability diagnostics, provenance for each calibration window, and both dashboards retaining their forecasting functionality. Do not claim economic or causal identification from correlation alone.
 
-If time is tight, prioritize **A → B → C → D**, skip the dashboard, and report well-validated model comparisons instead. Schedule a brief parameter-recovery experiment before presenting any empirical interpretation.
+An OU one-factor alternative, missing-maturity filtering, constant-maturity interpolation, and richer observation noise are later robustness candidates. Prioritize Tickets A → B → C → D.
 
-## 11. Definition of done
+## 10. Completion criteria for the modeling study
 
-- [ ] WTI CL data identified via `contrcode=1986`, cleaned, and validated.
-- [ ] All output observation dates and maturity cutoffs are traceable to actual contracts.
-- [ ] M1 and M2 implement exact physical transitions and coherent risk-neutral pricing equations.
-- [ ] Synthetic tests cover numerical correctness and parameter/forecast recovery limitations.
-- [ ] Estimation only uses training observations; no test leakage or contemporaneous forecast peeking.
-- [ ] PCA and state-space **forecasts** are compared on the same targets; reconstruction is separate.
-- [ ] Results include RMSE by maturity rank, an overall table, at least one curve figure, and caveats.
-- [ ] README has setup/run commands, assumptions, data-license note, and limitations.
-- [ ] Dashboard exists **only if** it doesn't displace the validation work.
+- [ ] Existing data pipeline and forecast/daily workflows remain reproducible.
+- [ ] Schwartz–Smith transitions, pricing, Kalman updates, and likelihood receive independent mathematical checks.
+- [ ] Initialization, parameter constraints, convergence, and identification limitations are documented.
+- [ ] Synthetic validation reports state/parameter recovery variability and failures across seeds.
+- [ ] Structural reconstruction errors and residual diagnostics are separated from predictive innovations and forecasts.
+- [ ] PCA reports dimensionality, loadings, scores, and reconstruction using calibration-fitted transforms.
+- [ ] Structural/statistical comparisons use common observations and disclose maturity alignment and PCA ambiguity.
+- [ ] Stability experiments record calibration windows and retain the original fixed-parameter analysis.
+- [ ] Figures and tables report only computed results, with uncertainty and caveats.
+- [ ] Dashboards consume saved outputs and preserve secondary forecasting views.
 
-## 12. Interpretation and limitations to acknowledge
+These are future acceptance criteria, not a declaration that the current modeling study is complete.
 
-- Historical futures prices do **not** reveal the true latent factors. Kalman-filter trajectories are model-dependent estimates.
-- A high training likelihood is not proof of forecast superiority; compare out-of-sample results and a no-change baseline.
-- There is no guarantee that two factors will beat one factor on a particular five-year sample or horizon.
-- The model assumes Gaussian state shocks, a specific risk-premium structure, and a simple measurement-noise model. Real oil markets can have jumps and regime shifts.
-- WTI's 2021–2025 sample includes different oil-price regimes, so results may not transport to other periods.
-- Some risk-neutral/physical parameters may be weakly identified by futures curves alone; report uncertainty and sensitivity rather than definitive economic claims.
-- `lasttrddate` is initially a practical cutoff proxy, not necessarily the economically exact delivery horizon.
-- Rank-based PCA has contract-roll artifacts; constant-maturity interpolation is a valuable *later* robustness analysis.
-- WRDS price data are licensed; the public repository should provide code and reproducible synthetic datasets, not redistribute the underlying prices.
+## 11. Interpretation and limitations
+
+- Filtered χ and ξ are model-dependent estimates; futures prices do not reveal true latent factors.
+- Short maturity coverage may weaken separation of short- and long-term effects. A two-factor specification does not prove that the data need exactly two factors.
+- High training likelihood or low reconstruction error is insufficient evidence of economic identification or forecast superiority.
+- The Gaussian state/noise assumptions, risk-premium restriction, and fixed parameters may be inadequate during jumps or regime shifts; residual and stability analyses should investigate this.
+- Physical drift and risk premiums may be weakly identified. Report uncertainty and sensitivity rather than definitive economic claims.
+- PCA components reflect a chosen sample, centering, scaling, and maturity representation; sign/rotation ambiguity limits direct naming as structural factors.
+- `lasttrddate` is a practical cutoff proxy. Rolling ranks introduce contract changes into PCA columns and forecast targets.
+- The 2025 period has already been explored. Record future method choices and avoid describing it as an untouched final holdout.
+- Empirical reconstruction, PCA, residual, and stability findings must be computed and documented before publication. The included synthetic demo does not supply them.
+- Preserve the separation of licensed WRDS prices, provider-specific live history, and shareable synthetic artifacts.
+
+## 12. Reproducibility and operational continuity
+
+Use the commands in [README.md](README.md) for extraction, panel preparation, saved analysis generation, export, and local dashboards. [DEPLOYMENT.md](DEPLOYMENT.md) documents optional hosting and the secondary daily update workflow. Package names, deployment identifiers, data paths, and public/private storage conventions remain compatible with the existing implementation.
+
+Run the current Python and JavaScript project checks for future implementation changes, plus the relevant mathematical or modeling acceptance checks. Record actual test outcomes and any unavailable runtime. Do not regenerate or overwrite empirical result bundles merely to update research documentation.
 
 ## 13. Primary references
 
 1. Schwartz, E., & Smith, J. E. (2000). “Short-Term Variations and Long-Term Dynamics in Commodity Prices.” *Management Science*, 46(7), 893–911. https://doi.org/10.1287/mnsc.46.7.893.12034 — core model and Kalman-style estimation motivation.
-2. Author-hosted PDF of Schwartz & Smith: https://www.anderson.ucla.edu/faculty/eduardo.schwartz/articles/72.pdf — consult the primary paper for the original conventions, estimation, and parameter-identification discussion.
+2. Author-hosted PDF of Schwartz & Smith: https://www.anderson.ucla.edu/documents/areas/fac/finance/72.pdf — consult the primary paper for the original conventions, estimation, and parameter-identification discussion.
 3. Ballestra, L. V., & Tezza, M. (2025). Related multi-factor commodity pricing research: https://arxiv.org/html/2501.15596v1 — possible future extension; not required for the MVP.
 
 ---
 
-**First action:** Execute **Ticket A**. Do not start calibration until you have inspected real curve plots and established that the contract identifiers, expiries, and settlements have been merged and ranked correctly.
+**Next implementation action:** Execute Ticket A's independent mathematical validation of the existing Schwartz–Smith and Kalman filter implementations before adding reconstruction diagnostics or PCA. The current step updates documentation only.

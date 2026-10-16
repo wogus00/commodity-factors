@@ -16,11 +16,15 @@ def negative_log_likelihood(theta,
                             tau,
                             fixed_params,
                             dt=1 / 252,
-                            sigma_epsilon=0.01):
+                            sigma_epsilon=0.01, x0=None, P0=None):
     """
     Calculate negative log-likelihood for candidate parameters.
     """
 
+    if np.asarray(theta).shape != (4,):
+        raise ValueError("theta must contain four parameters")
+    if not np.isfinite(np.asarray(log_prices, dtype=float)).any():
+        raise ValueError("MLE requires observed prices")
     params = fixed_params.copy()
 
     for name, value in zip(PARAMETER_NAMES, theta):
@@ -31,7 +35,7 @@ def negative_log_likelihood(theta,
         tau=tau,
         params=params,
         dt=dt,
-        sigma_epsilon=sigma_epsilon,
+        sigma_epsilon=sigma_epsilon, x0=x0, P0=P0, diagnostics=False,
     )
 
     return -results["log_likelihood"]
@@ -44,6 +48,7 @@ def estimate_parameters(
     initial_guess=None,
     dt=1 / 252,
     sigma_epsilon=0.01,
+    *, x0=None, P0=None, maxiter=300,
 ):
     """
     Estimate four Schwartz-Smith parameters by MLE.
@@ -60,6 +65,7 @@ def estimate_parameters(
         (-0.99, 0.99),  # -1 < rho < 1
     ]
 
+    _validate_start(initial_guess, bounds)
     result = minimize(
         fun=negative_log_likelihood,
         x0=initial_guess,
@@ -68,10 +74,11 @@ def estimate_parameters(
             tau,
             fixed_params,
             dt,
-            sigma_epsilon,
+            sigma_epsilon, x0, P0,
         ),
         method="L-BFGS-B",
         bounds=bounds,
+        options={"maxiter": maxiter},
     )
 
     estimated_params = fixed_params.copy()
@@ -82,7 +89,8 @@ def estimate_parameters(
     return {
         "params": estimated_params,
         "log_likelihood": -result.fun,
-        "success": result.success,
+        "success": bool(result.success and np.isfinite(result.fun)),
+        "diagnostics": _optimizer_diagnostics(result, bounds, PARAMETER_NAMES),
         "message": result.message,
         "optimizer_result": result,
     }
@@ -132,10 +140,12 @@ def unpack_real_parameters(theta):
     return params, float(sigma_epsilon)
 
 
-def negative_log_likelihood_real(theta, Y, tau, dt):
+def negative_log_likelihood_real(theta, Y, tau, dt, x0=None, P0=None):
     """
     Negative Kalman log-likelihood for real WTI data.
     """
+    if not np.isfinite(np.asarray(Y, dtype=float)).any():
+        raise ValueError("MLE requires observed prices")
     params, sigma_epsilon = unpack_real_parameters(theta)
 
     results = kalman_filter(
@@ -143,14 +153,14 @@ def negative_log_likelihood_real(theta, Y, tau, dt):
         tau=tau,
         params=params,
         dt=dt,
-        sigma_epsilon=sigma_epsilon,
+        sigma_epsilon=sigma_epsilon, x0=x0, P0=P0, diagnostics=False,
     )
 
     return -results["log_likelihood"]
 
 
 def estimate_real_parameters(Y, tau, dt, initial_guess=None, *,
-                             fixed_lambda_chi=None, maxiter=300):
+                             fixed_lambda_chi=None, maxiter=300, x0=None, P0=None):
     """
     Estimate Schwartz-Smith parameters using real futures prices.
 
@@ -180,15 +190,18 @@ def estimate_real_parameters(Y, tau, dt, initial_guess=None, *,
         (-2.0, 2.0),    # delta
         (0.001, 0.1),   # sigma_epsilon
     ]
+    if np.asarray(initial_guess).shape != (len(bounds),):
+        raise ValueError("initial_guess must contain eight parameters")
     if fixed_lambda_chi is not None:
         initial_guess = list(initial_guess)
         initial_guess[5] = float(fixed_lambda_chi)
         bounds[5] = (float(fixed_lambda_chi), float(fixed_lambda_chi))
 
+    _validate_start(initial_guess, bounds)
     result = minimize(
         fun=negative_log_likelihood_real,
         x0=initial_guess,
-        args=(Y, tau, dt),
+        args=(Y, tau, dt, x0, P0),
         method="L-BFGS-B",
         bounds=bounds,
         options={"maxiter": maxiter},
@@ -201,7 +214,38 @@ def estimate_real_parameters(Y, tau, dt, initial_guess=None, *,
         "sigma_epsilon": sigma_epsilon,
         "delta": params["mu_xi"] - params["lambda_xi"],
         "log_likelihood": -result.fun,
-        "success": result.success,
+        "success": bool(result.success and np.isfinite(result.fun)),
+        "diagnostics": _optimizer_diagnostics(result, bounds, REAL_PARAMETER_NAMES),
         "message": result.message,
         "optimizer_result": result,
     }
+
+
+def _validate_start(initial_guess, bounds):
+    guess = np.asarray(initial_guess, dtype=float)
+    limits = np.asarray(bounds)
+    if (guess.shape != (len(bounds),) or not np.isfinite(guess).all()
+            or not np.isfinite(limits).all()
+            or np.any(guess < limits[:, 0]) or np.any(guess > limits[:, 1])):
+        raise ValueError("initial_guess must be finite, match the parameters and lie within bounds")
+
+
+def _optimizer_diagnostics(result, bounds, names):
+    """Report constrained stationarity and active bounds, not just solver success."""
+    projected = np.asarray(result.jac, dtype=float).copy()
+    active, fixed = [], []
+    for i, (name, (lower, upper)) in enumerate(zip(names, bounds)):
+        if lower == upper:
+            fixed.append(name)
+            projected[i] = 0.0
+            continue
+        at_lower = np.isclose(result.x[i], lower, rtol=0, atol=1e-6)
+        at_upper = np.isclose(result.x[i], upper, rtol=0, atol=1e-6)
+        if at_lower or at_upper:
+            active.append(name)
+        if (at_lower and projected[i] > 0) or (at_upper and projected[i] < 0):
+            projected[i] = 0.0
+    return {"iterations": int(result.nit), "function_evaluations": int(result.nfev),
+            "projected_gradient_inf_norm": float(np.max(np.abs(projected))),
+            "active_bounds": active, "fixed_parameters": fixed,
+            "finite_objective": bool(np.isfinite(result.fun))}

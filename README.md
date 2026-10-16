@@ -1,4 +1,4 @@
-# Commodity Factors
+# Latent Factor Modeling of Crude Oil Futures
 
 [Open the live demo](https://commodity-factors.vercel.app) · [Source code](https://github.com/wogus00/commodity-factors)
 
@@ -7,74 +7,168 @@ notebooks are provided without saved outputs; licensed market data and local
 results are excluded. The public repository starts from a clean snapshot and
 does not include the private research commit history.
 
-A chart-focused commodity research workspace with a TradingView-inspired dark
-layout, built for Vercel. Explore futures curves and compare random-walk,
-one-factor, and Schwartz–Smith two-factor forecasts. Python calibration runs
-separately; both the browser frontend and the retained local Streamlit app
-consume saved results without fitting on control changes.
+A research workspace for estimating and interpreting the latent factors of
+the WTI crude oil futures term structure. The primary focus is the
+Schwartz–Smith model's factor dynamics, maturity-dependent loadings, and
+ability to reconstruct observed futures curves. PCA is a statistical
+benchmark for studying dimensionality and comparing structural and statistical
+factor representations.
+
+The project builds on the existing data pipeline, model implementations,
+saved-result architecture, and dashboards. Python forecast comparisons and daily
+updates remain available as secondary applications outside the Vercel frontend. Python calibration runs
+separately; the browser frontend and local Streamlit app consume saved results
+without fitting on control changes. The package, environment, retain the operational name `commodity-factors`.
+
+## Research objectives
+
+1. Estimate and interpret the Schwartz–Smith short-term deviation χ and
+   long-term equilibrium ξ from WTI futures settlements.
+2. Evaluate how well the structural model explains and reconstructs observed
+   curves across dates and maturities.
+3. Introduce PCA as a statistical benchmark for factor dimensionality and
+   maturity-dependent loadings.
+4. Compare structural and statistical factors through reconstruction errors,
+   residual diagnostics, and parameter and loading stability.
+
+These are research objectives, not findings. No claim about the number of
+factors needed for WTI, economic identification, or model superiority follows
+from the included demo or optimizer convergence.
+
+## Methodology and current implementation
+
+The existing WRDS / LSEG Datastream pipeline selects the six nearest eligible
+WTI CL contracts (`contrcode=1986`), retains contract identities and last
+trading dates, and builds a complete panel of positive log settlements.
+Maturity is years to `lasttrddate`, using 365.25 days per year. This cutoff is a
+pricing-horizon proxy; maturity ranks change contract at rolls.
+
+The two-factor state is `[χ, ξ]`: χ follows mean-reverting OU dynamics and ξ
+follows Brownian dynamics with physical drift. Log futures prices load on χ
+through `exp(-kappa * tau)` and on ξ through a unit loading, plus the
+risk-neutral pricing adjustment. The implementation includes correlated
+Gaussian transitions, actual calendar gaps, and the lognormal convexity term.
+The current calibration fixes `lambda_chi=0` and estimates parameters by
+training-period Kalman innovation likelihood. Filtered states produce
+same-day curve reconstructions; prior states produce forecasts.
+
+| Component | Current capability | Planned modeling work |
+| --- | --- | --- |
+| Data pipeline | Contract-level cleaning, maturity ranking, complete-panel validation | Additional data-quality and maturity-proxy diagnostics |
+| Schwartz–Smith and Kalman filter | Pricing and transition equations, filtering, bounded MLE | Independent mathematical validation, initialization and identification analysis |
+| Structural reconstructions | Saved `reconstructions.parquet` and fitted-curve views | Pooled and per-maturity reconstruction metrics and residual reports |
+| Latent factors | Saved filtered χ and ξ, factor histories and hypothetical shocks | State uncertainty, interpretation, and parameter stability studies |
+| PCA | Constant-maturity PCA with training-only centering/scaling, diagnostics and reconstruction | Compare statistical factors with structural states |
+| Forecasting | Random walk, Brownian one-factor, and two-factor backtests; daily forecasts | Retained as a secondary evaluation |
+
+The one-factor implementation uses a Brownian log-price state with a linear
+maturity adjustment. An OU one-factor alternative is future work. The current
+tests check selected equations and filter mechanics; independent validation
+and multi-seed recovery are still required before interpreting fitted factors
+as economic evidence. Wavelets are outside the current scope.
+
+## Planned evaluation framework
+
+The detailed methodology and implementation order are in
+[PROJECT_PLAN.md](PROJECT_PLAN.md). The modeling evaluation will distinguish:
+
+- **Curve reconstruction:** pooled and per-rank log-price RMSE, MAE, and bias,
+  representative fitted curves, and residual patterns against actual maturity.
+  Both structural filtered states and PCA scores may use the current curve;
+  these are same-day reconstructions, including on evaluation dates.
+- **Factor dimensionality and loadings:** training-sample PCA scree and
+  cumulative explained variance, with one- and two-component reconstructions
+  compared on the same observations. Center log levels with a training mean;
+  any standardization is a separately reported sensitivity analysis.
+- **Residual diagnostics:** reconstruction residuals by date and maturity,
+  cross-maturity correlation, autocorrelation, and tail behavior. Evaluate
+  Kalman innovations and their covariance-standardized form separately;
+  filtered reconstruction residuals are not predictive innovations.
+- **Structural/statistical factor comparison:** aligned loading patterns,
+  score/state associations, and factor subspaces. Account for PCA sign, scale,
+  and rotation ambiguity; a principal component has no automatic economic
+  identity as χ or ξ. Structural loadings use actual `tau`, while rank-based
+  PCA loadings refer to rolling rank columns.
+- **Stability:** sensitivity to optimizer starts, state initialization,
+  calibration windows, and maturity coverage; parameter uncertainty and PCA
+  loading/subspace stability. Separate planned rolling or subperiod refits
+  from the existing fixed-parameter evaluation.
+- **Secondary forecasts:** preserve aligned rank-wise errors at 1, 5, and 20
+  trading observations and one-step predictive likelihood. Daily forecasts
+  continue to use the same contract across dates.
+
+Preserve the current 2021–2023 calibration, 2024 validation, and 2025 evaluation
+periods. Fit model parameters and planned PCA centering/loadings on calibration
+data only, then keep them fixed for the main evaluation. Current-date curve
+observations may update filtered states or PCA scores for reconstruction.
+Forecasts use observations only through their origin. The 2025 period was
+already explored in the notebook and is not an untouched holdout.
+
+The saved bundles currently provide structural reconstructions and forecast
+metrics. PCA comparisons, reconstruction summary reports, expanded residual
+diagnostics, and stability studies have not yet been implemented. Synthetic
+examples demonstrate the workflow and do not establish empirical WTI results.
+
+## Next research step
+
+Validate the existing Schwartz–Smith and Kalman implementations before adding
+PCA: independently check exact transition means and correlated covariances,
+risk-neutral pricing conventions and convexity, Gaussian likelihood, and
+Joseph covariance updates. Add boundary and irregular-gap checks, examine the
+first-curve initialization and first-day likelihood treatment, and assess
+innovation calibration and parameter recovery across synthetic seeds.
+Document any discrepancies before proposing equation or estimator changes.
 
 ## Run the web workspace
 
-The browser frontend and generated synthetic demo are included in `web/`.
-No JavaScript dependency installation or frontend build is needed.
+The static dashboard focuses on latent factor modeling in six sections:
+Overview, Futures Term Structure, Schwartz–Smith Model, PCA Factor Analysis,
+PCA Robustness, and Model Comparison. It retains the Plotly chart workspace,
+local imports, and CSV exports. Same-day reconstruction is labeled separately
+from forecasting; the Vercel frontend has no forecasting controls or feed.
 
 ```bash
-python3 -m http.server 8510 --bind 127.0.0.1 --directory web
+python scripts/export_modeling_bundle.py
+npm run test:web
+npm run build
+python3 -m http.server 8510 --bind 127.0.0.1 --directory dist
 ```
 
-Open `http://127.0.0.1:8510`. The workspace has price, forecast, curve,
-factor, and daily forecast views; contract selection; chart zoom and crosshairs; curve snapshots;
-error charts; model overlays; factor shocks; and CSV export. The right panel
-compares models on the same evaluation window across all maturity ranks.
-Use keys 1–5 to change view, F to reset zoom, and L to toggle log scale.
-
-Regenerate the browser demo after updating its Python bundle:
+Open `http://127.0.0.1:8510`. The checked-in example is synthetic and contains
+Schwartz–Smith outputs. To include existing historical PCA and robustness
+outputs, export them outside the public tree:
 
 ```bash
-python scripts/export_web_bundle.py
+python scripts/export_modeling_bundle.py \
+  --bundle results/wti --pca results/pca/wti \
+  --robustness results/pca/wti/robustness \
+  --relaxed-sensitivity results/pca/wti_coverage50/robustness \
+  --output results/wti/modeling.json
 ```
 
-Load local WTI results in the web workspace:
+Choose **Import results** and select that JSON. Omit optional PCA/robustness
+arguments when those analyses are unavailable. Export reads saved tables; it
+never fits a model. Imports remain in browser memory and disappear on reload.
+The public build rejects empirical data in `web/data/`. Approved historical
+outputs can instead be loaded from Vercel Blob using the separate
+[export and manual upload workflow](docs/modeling_blob_deployment.md).
 
-```bash
-python scripts/export_web_bundle.py \
-  --bundle results/wti \
-  --output results/wti/browser.json
-```
-
-Choose **Import results** and select `results/wti/browser.json`. File parsing,
-charts, metrics, and shocks run in the browser. The application does not upload
-the imported file or persist its quotes to browser storage. Reloading the page
-clears imported data. The exporter prevents empirical output inside `web/`.
+Filtered states, reconstruction residuals, and saved predictive likelihood are
+available. Smoothed states and standardized innovations are not present in the
+current saved bundles. Historical structural calibration may predate the model
+audit; its provenance is displayed rather than silently recalibrating. Model
+Comparison shows only saved PCA scaling/window comparisons on common support;
+there is no matched-target Schwartz–Smith versus PCA leaderboard.
 
 ## Deploy to Vercel
 
-Deploy the repository with **Framework Preset: Other**, **Output Directory:
-web**, and no build or install command. `vercel.json` supplies these settings.
-The deployable tree contains HTML, CSS, JavaScript, a local Plotly library,
-and synthetic data; it needs no Python server or backend credentials.
-
-Using Vercel CLI, from the repository root on a machine with Node.js installed:
-
-```bash
-npx vercel
-npx vercel --prod
-```
-
-The first command creates a preview deployment; the second promotes a build
-to production. Sign in to Vercel and select your account/project when prompted.
-`.vercelignore` restricts uploads to `web/` and `vercel.json`. WRDS data,
-notebooks, local result bundles, and Python environments are excluded.
-
-The public deployment opens the synthetic demo until a daily feed is activated.
-[Deployment and daily-feed setup](DEPLOYMENT.md) describes the one-time account
-setup, cost estimate, initialization, and scheduler activation. Private WTI
-results can also be imported locally in the browser.
-
-Streamlit requires a persistent WebSocket connection, while
-[Vercel Functions cannot serve WebSockets](https://vercel.com/docs/limits).
-The Vercel frontend therefore shares the saved analysis format with the Python
-pipeline instead of trying to host Streamlit itself.
+Use **Other**, repository root **.**, Node.js **22 or later**, build command
+`node scripts/build_web.mjs`, output **dist**, and no install command.
+`vercel.json` supplies the build configuration. No Python server, feed tokens,
+or backend credentials are needed. See [deployment instructions](DEPLOYMENT.md)
+for validation and manual deployment. Nothing deploys from the export/build
+commands above. The public example remains synthetic; historical JSON is
+imported locally.
 
 ## Run the local Streamlit app
 
@@ -98,9 +192,10 @@ with hypothetical shocks, and the daily observation/forecast review. The sidebar
 forecast horizon, rank, models, and evaluation window. CSV download exports the
 forecast observations in the selected window.
 
-## Daily forecast review and automatic updates
+## Secondary workflow: daily forecasts and automatic updates
 
-Choose **Daily** in the web workspace or **Daily forecast** in Streamlit.
+Choose **Daily forecast** in the separate local Streamlit app. The Vercel
+modeling frontend does not consume this legacy forecasting workflow.
 For an observed session such as October 7, the view shows:
 
 - October 7's observed settlement and current filtered states: one-factor x,
@@ -149,6 +244,7 @@ python scripts/update_daily.py \
   --prices /path/to/completed_settlements.csv \
   --next-session 2026-10-12
 
+# Legacy forecasting export; not accepted by the modeling frontend:
 python scripts/export_web_bundle.py \
   --bundle results/wti \
   --output results/wti/browser.json
@@ -166,7 +262,7 @@ job can catch up multiple complete sessions in order. It records a forecast
 from the latest received session; missed runs do not create backdated issued
 forecasts. No MLE runs during the daily update or on UI changes.
 
-## Generate results
+## Generate saved model analyses
 
 For the existing local WTI panel:
 
@@ -179,6 +275,9 @@ validation and 2025 test, and saves `results/wti/`. The two-factor estimator use
 two deterministic starting points, fixes `lambda_chi=0`, and selects the best
 converged training likelihood. A failed calibration stops before saving a
 bundle. The scripts print optimizer status and a one-day test comparison.
+The bundle also contains filtered factor estimates and same-day structural
+reconstructions. Its `metrics.parquet` currently summarizes forecast errors;
+the planned modeling evaluation will add reconstruction and diagnostic reports.
 
 Regenerate the reproducible demo with training-only fits:
 
@@ -206,12 +305,12 @@ bundles are ignored by version control. Do not redistribute licensed WRDS
 quotes or their result tables without permission. The synthetic bundle is
 shareable.
 
-## What the comparison means
+## What the existing forecast comparison means
 
 - **Random walk:** repeats the forecast origin's rank-wise log curve.
 - **One factor:** the existing Brownian log-price state with physical drift and
-  a linear maturity pricing adjustment. This is not the OU model proposed in
-  `PROJECT_PLAN.md`; retaining it preserves the implemented research baseline.
+  a linear maturity pricing adjustment, retained as the implemented research
+  baseline. The project plan lists an OU alternative as future work.
 - **Two factors:** a mean-reverting short-term deviation and a persistent
   long-term equilibrium, with exact correlated Gaussian transitions and the
   risk-neutral lognormal pricing adjustment.
@@ -292,10 +391,26 @@ Kalman likelihood and covariance stability, aligned forecast targets,
 training-only calibration, future-price perturbations, saved-bundle round
 trips, and Streamlit controls across all five views. Daily checks cover causal
 state updates, same-contract rolls, expiry and calendar boundaries, fixed
-parameters, immutable recorded forecasts, and browser/Python forecast parity.
+parameters and immutable recorded forecasts.
 App tests use Streamlit's
 [AppTest](https://docs.streamlit.io/develop/api-reference/app-testing/st.testing.v1.apptest)
-and the saved synthetic bundle. The JavaScript checks compare browser metrics
-and pricing equations with saved Python results, test common evaluation
-windows and import validation, and verify CSV escaping. Node.js is needed
-only to run these checks, not to serve or deploy the frontend.
+and the saved synthetic bundle. JavaScript checks validate modeling imports,
+all six sections, missing-output behavior, source-value preservation, and CSV
+escaping. The optional historical fixture exercises every PCA/robustness view.
+Node.js is required for frontend tests and the static production build. Passing
+tests alone does not establish factor identification or empirical stability.
+
+## PCA factor extraction
+
+Run `python scripts/run_pca.py` in the `commodity-factors` environment to fit PCA
+on the local historical panel. Separate results and plots are saved under
+`results/pca/wti`. The default uses fixed-maturity log-price changes;
+`--transformation log_prices` supports level-based curve compression.
+See [PCA methodology and validation](docs/pca_methodology.md) for preprocessing,
+coverage, economic shape checks, historical results, and limitations.
+
+For rolling factor stability and robustness, run `python scripts/run_pca.py --robustness`.
+This compares 126/252/504-date prior-only windows, covariance/correlation PCA,
+K=1–3 held-out reconstructions, annual loading shapes, and interpolation/grid/quote-loss
+sensitivities. Outputs are separate under `results/pca/wti/robustness`.
+See [robustness methodology and empirical findings](docs/pca_robustness.md).

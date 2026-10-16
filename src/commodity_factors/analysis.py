@@ -190,7 +190,8 @@ def _fit_diagnostics(fit):
     result = fit["optimizer_result"]
     return {"success": bool(fit["success"]), "message": str(fit["message"]),
             "training_log_likelihood": float(fit["log_likelihood"]),
-            "iterations": int(result.nit), "evaluations": int(result.nfev)}
+            "iterations": int(result.nit), "evaluations": int(result.nfev),
+            **fit.get("diagnostics", {})}
 
 
 def run_analysis(panel, *, validation_start="2024-01-01", test_start="2025-01-01",

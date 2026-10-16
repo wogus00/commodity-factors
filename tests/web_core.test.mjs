@@ -1,133 +1,113 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
-import {decodeBundle, selectPredictions, summarize, scenarioLogPrices, nearestDate, observationOnOrBefore, dailySnapshot, dailyCsv, csv} from "../web/core.js";
-
-const payload = JSON.parse(await readFile(new URL("../web/data/demo.json", import.meta.url), "utf8"));
-const demo = decodeBundle(payload);
-
-export function runCoreChecks(register = test) {
-register("browser RMSE and MAE match Python metrics for both periods and every horizon", () => {
-  for (const split of ["test", "validation"]) {
-    for (const horizon of demo.metadata.horizons) {
-      const results = summarize(selectPredictions(demo, {split, horizon}));
-      for (const metric of results) {
-        const expected = demo.metrics.find(r => r.split === split && r.horizon === horizon && r.model === metric.model && r.maturity_rank === 0);
-        assert.ok(Math.abs(metric.rmse - expected.rmse_log) < 1e-10);
-        assert.ok(Math.abs(metric.mae - expected.mae_log) < 1e-10);
-        assert.equal(metric.n, expected.n);
-        assert.equal(metric.n_dates, expected.n_dates);
-      }
-    }
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {decodeBundle, VIEWS, nearestDate, csv} from '../web/core.js';
+import {viewPanels} from '../web/views.js';
+const payload=JSON.parse(await readFile(new URL('../web/data/modeling-demo.json',import.meta.url),'utf8'));
+const bundle=decodeBundle(payload);
+const selection={view:'overview',chart:'summary',snapshot:bundle.dates.at(-1),rank:1,window:252,method:'covariance',period:'all',k:3,track:1,coverage:'strict',forecastSplit:'test',forecastHorizon:1,log:false};
+test('modeling export includes only observed curves and filtered structural outputs',()=>{
+ assert.ok(['panel','ss_loadings','ss_reconstructions','states','pca_explained_variance','pca_loadings','pca_scores','pca_reconstructions','rolling_spectrum','rolling_fits','rolling_loadings','rolling_metrics'].every(key=>payload.tables[key]));
+ assert.equal(bundle.metadata.state_estimate,'filtered');
+ assert.equal(bundle.metadata.smoothed_states_available,false);
+ assert.equal(bundle.metadata.dataset_id,'synthetic');
+ assert.equal(bundle.metadata.pca.transformation,'log_changes');
+ assert.deepEqual(bundle.metadata.robustness.windows,[126,252,504]);
+ assert.deepEqual(bundle.metadata.forecast.horizons,[1,5,20]);
+ assert.ok(bundle.ss_reconstructions.every(r=>Math.abs(r.observed_log-r.fitted_log-r.residual_log)<1e-10));
+});
+test('legacy forecasting bundles and missing states are rejected',()=>{
+ assert.throws(()=>decodeBundle({...payload,format:'commodity-factors-web'}),/modeling export/);
+ const changed=structuredClone(payload);changed.tables.states.data.pop();
+ assert.throws(()=>decodeBundle(changed),/filtered states/);
+});
+test('malformed data and prototype column injection are rejected',()=>{
+ const changed=structuredClone(payload);changed.tables.panel.columns[0]='__proto__';
+ assert.throws(()=>decodeBundle(changed),/Invalid/);
+ const negative=structuredClone(payload);negative.tables.panel.data[0][negative.tables.panel.columns.indexOf('settlement')]=-1;
+ assert.throws(()=>decodeBundle(negative),/observed curve/);
+});
+test('all seven sections and their chart selections render safely with saved synthetic outputs',()=>{
+ assert.equal(Object.keys(VIEWS).length,7);
+ assert.deepEqual(Object.keys(VIEWS),['overview','structure','schwartz','forecast','pca','robustness','comparison']);
+ for(const [view,config] of Object.entries(VIEWS))for(const chart of config.charts){
+  const result=viewPanels(bundle,{...selection,view,chart});
+  assert.ok(result.main.title);assert.ok(Array.isArray(result.rows));assert.ok(Array.isArray(result.main.traces));
+ }
+ assert.match(viewPanels(bundle,{...selection,view:'pca'}).note,/Synthetic data; not historical WTI/);
+ assert.match(viewPanels(bundle,{...selection,view:'robustness'}).note,/does not assess the 2022 WTI market/);
+ assert.match(viewPanels(bundle,{...selection,view:'comparison'}).note,/No matched-target/);
+ assert.ok(viewPanels(bundle,{...selection,view:'overview'}).rows.some(row=>row.section==='Forecast evaluation'&&/Saved held-out/.test(row.availability)));
+});
+test('PCA bundle has finite loadings, reconstruction metrics, and prior-only rolling fits',()=>{
+ assert.ok(bundle.pca_explained_variance.every(r=>Number.isFinite(r.ratio)&&r.ratio>=0));
+ assert.ok(bundle.pca_loadings.every(r=>[r.PC1,r.PC2,r.PC3].every(Number.isFinite)));
+ assert.ok(bundle.pca_reconstructions.some(r=>Number.isFinite(r.fitted_log)));
+ assert.ok(bundle.rolling_metrics.some(r=>r.window===126&&r.k===1));
+ assert.ok(bundle.rolling_metrics.some(r=>r.window===252&&r.k===2));
+ assert.ok(bundle.rolling_metrics.some(r=>r.window===504&&r.k===3));
+ assert.ok(bundle.rolling_fits.filter(r=>r.scored).every(r=>r.train_end<r.date_));
+});
+test('forecast views use saved held-out predictions and metrics without fitting in the browser',()=>{
+ const prediction=viewPanels(bundle,{...selection,view:'forecast',chart:'predictions'});
+ const source=bundle.forecast_predictions.filter(r=>r.split==='test'&&r.horizon===1&&r.maturity_rank===1);
+ assert.equal(prediction.main.traces.length,4);
+ assert.equal(prediction.main.traces[0].x.length,new Set(source.map(r=>r.date_)).size);
+ assert.ok(bundle.forecast_predictions.every(r=>r.origin_date<r.date_));
+ assert.match(prediction.note,/Synthetic data/);
+ for(const chart of ['model-errors','maturity-errors','horizons']){
+  const result=viewPanels(bundle,{...selection,view:'forecast',chart});
+  assert.ok(result.main.traces.length,`${chart} has saved traces`);
+  assert.ok(result.main.traces.every(trace=>trace.y.every(Number.isFinite)),`${chart} has finite metrics`);
+  if(chart==='maturity-errors')assert.equal(result.main.traces[0].x.length,6);
+ }
+});
+test('structural curves use saved fitted values, not browser-generated future prices',()=>{
+ const result=viewPanels(bundle,{...selection,view:'schwartz',chart:'curve',log:true});
+ assert.deepEqual(result.main.traces[1].y,bundle.ss_reconstructions.filter(r=>r.date_===selection.snapshot).map(r=>r.fitted_log));
+ assert.match(result.note,/filtered|Filtered/);assert.match(result.note,/smoothed states are unavailable/);
+});
+test('CSV escapes formula-like strings and snapshot selection uses existing dates',()=>{
+ assert.match(csv([{name:'=SUM(1,2)',value:1}]),/"'=SUM/);
+ assert.equal(nearestDate(['2025-01-03','2025-01-06'],'2025-01-05'),'2025-01-06');
+});
+test('markup exposes forecast evaluation while excluding the old live daily forecast interface',async()=>{
+ const html=await readFile(new URL('../web/index.html',import.meta.url),'utf8');
+ assert.match(html,/<title>Latent Factor Modeling of Crude Oil Futures<\/title>/);
+ assert.ok(html.indexOf('data-view="forecast"')<html.indexOf('data-view="pca"'));
+ assert.match(html,/Synthetic forecast benchmark/);
+ assert.match(html,/overview-forecast-open/);
+ assert.doesNotMatch(html,/Saved numerical results|evidence-head|evidence-rows|table-caption/);
+ assert.match(html,/data-view="forecast"/);
+ assert.match(html,/forecast-horizon-select/);
+ assert.doesNotMatch(html,/daily-target|data-view="daily"/);
+ for(const name of ['app.js','core.js','views.js']){
+  const text=await readFile(new URL(`../web/${name}`,import.meta.url),'utf8');
+  assert.doesNotMatch(text,/forecastContract|dailySnapshot|selectPredictions|fetchLive/);
+ }
+});
+// Real saved outputs are optional locally; CI's checked-in fixture remains synthetic.
+const empiricalPath=process.env.MODELING_TEST_BUNDLE;
+if(empiricalPath){
+ const empirical=decodeBundle(JSON.parse(await readFile(empiricalPath,'utf8')));
+ test('every historical PCA and robustness view uses finite saved traces',()=>{
+  for(const [view,config] of Object.entries(VIEWS))for(const chart of config.charts){
+   const result=viewPanels(empirical,{...selection,view,chart,snapshot:empirical.dates.at(-1)});
+   assert.ok(result.main.traces.length,`${view}/${chart} has no traces`);
+   for(const trace of result.main.traces)assert.ok(trace.y.every(y=>y===null||Number.isFinite(y)),`${view}/${chart} contains nonfinite values`);
   }
-});
-
-register("browser pricing equation reproduces saved Python reconstructions", () => {
-  const parameters = demo.metadata.parameters.two_factor;
-  for (const state of demo.states.filter((_, i) => i % 50 === 0)) {
-    const curve = demo.byDate.get(state.date_);
-    const actual = scenarioLogPrices(state, curve.map(r => r.tau), parameters);
-    const fitted = demo.reconstructions.filter(r => r.date_ === state.date_ && r.model === "two_factor").sort((a, b) => a.maturity_rank - b.maturity_rank);
-    actual.forEach((value, i) => assert.ok(Math.abs(value - fitted[i].fitted_log) < 1e-10));
-  }
-});
-
-register("short shocks decay with maturity and long shocks shift every log price equally", () => {
-  const state = demo.states.at(-1), tau = [0.1, 0.5, 1], p = demo.metadata.parameters.two_factor;
-  const baseline = scenarioLogPrices(state, tau, p);
-  const long = scenarioLogPrices(state, tau, p, 0, 0.2);
-  const short = scenarioLogPrices(state, tau, p, 0.2, 0);
-  baseline.forEach((value, i) => assert.ok(Math.abs(long[i] - value - 0.2) < 1e-12));
-  assert.ok(short[0] - baseline[0] > short[2] - baseline[2]);
-});
-
-register("evaluation windows keep the same forecast targets for all models", () => {
-  const rows = selectPredictions(demo, {split: "test", horizon: 5, start: "2025-03-01", end: "2025-04-30"});
-  const results = summarize(rows);
-  assert.equal(results.length, 3);
-  assert.equal(new Set(results.map(r => r.n)).size, 1);
-  assert.equal(new Set(results.map(r => r.n_dates)).size, 1);
-  assert.ok(rows.every(r => r.date_ >= "2025-03-01" && r.date_ <= "2025-04-30" && r.origin_date < r.date_));
-});
-
-register("incomplete model coverage and invalid origins are rejected on import", () => {
-  const incomplete = structuredClone(payload);
-  incomplete.tables.predictions.data.pop();
-  assert.throws(() => decodeBundle(incomplete), /common scoring sample/);
-  const invalid = structuredClone(payload);
-  const columns = invalid.tables.predictions.columns, row = invalid.tables.predictions.data[0];
-  row[columns.indexOf("origin_date")] = row[columns.indexOf("date_")];
-  assert.throws(() => decodeBundle(invalid), /origins/);
-});
-
-register("snapshot dates snap to available observations without inventing prices", () => {
-  assert.equal(nearestDate(["2025-01-03", "2025-01-06"], "2025-01-05"), "2025-01-06");
-});
-
-register("CSV contains origin and target dates and safely escapes text identifiers", () => {
-  const result = csv([{...demo.predictions[0], futcode: '=SUM(1,2)'}]);
-  assert.ok(result.startsWith("date_,origin_date,horizon,"));
-  assert.ok(result.includes('"\'=SUM(1,2)"'));
-});
-
-register("daily browser forecasts and states match the Python export", () => {
-  const actual = dailySnapshot(demo), expected = payload.daily_latest;
-  assert.ok(expected, "Regenerate the demo export to include the Python reference.");
-  for (const key of ["as_of", "prior_origin", "target_date", "futcode", "calendar_basis", "expiry"]) assert.equal(actual[key], expected[key]);
-  for (const key of Object.keys(expected.state)) assert.ok(Math.abs(actual.state[key] - expected.state[key]) < 1e-10);
-  for (const [index, row] of actual.models.entries()) {
-    for (const key of ["prior_log", "prior_price", "error_price", "error_percent", "next_log", "next_price"]) assert.ok(Math.abs(row[key] - expected.models[index][key]) < 1e-8, `${row.model}: ${key}`);
-  }
-});
-
-register("daily prior forecasts use the previous session and match saved one-day predictions", () => {
-  const snapshot = dailySnapshot(demo, "2025-10-07");
-  assert.equal(snapshot.prior_origin, "2025-10-06");
-  assert.equal(snapshot.target_date, "2025-10-08");
-  assert.equal(snapshot.prior_recorded_at, null);
-  for (const row of snapshot.models) {
-    const saved = demo.predictions.find(r => r.date_ === snapshot.as_of && r.model === row.model && r.horizon === 1 && r.maturity_rank === 1);
-    assert.ok(Math.abs(row.prior_log - saved.predicted_log) < 1e-10);
-    assert.ok(Math.abs(row.error_price - (snapshot.observed_price - row.prior_price)) < 1e-12);
-  }
-});
-
-register("future observations do not change a daily snapshot", () => {
-  const changed = decodeBundle(structuredClone(payload));
-  const before = dailySnapshot(changed, "2025-10-07");
-  for (const row of changed.panel.filter(r => r.date_ > before.as_of)) { row.settlement *= 2; row.log_settlement = Math.log(row.settlement); }
-  for (const row of changed.states.filter(r => r.date_ > before.as_of)) { row.chi += 1; row.xi += 1; row.one_factor_state += 1; }
-  assert.deepEqual(dailySnapshot(changed, before.as_of), before);
-});
-
-register("daily forecasts hold contract identity across rolls and suppress expired targets", () => {
-  const snapshot = dailySnapshot(demo, "2025-01-20");
-  const old = demo.byDate.get("2025-01-17")[1];
-  assert.equal(snapshot.futcode, String(old.futcode));
-  assert.equal(snapshot.models[0].prior_log, old.log_settlement);
-  assert.equal(dailySnapshot(demo, "2025-01-20", demo.ranks.at(-1)).models[0].prior_price, null);
-  const expired = dailySnapshot(demo, "2025-01-20", 1, snapshot.expiry);
-  assert.equal(expired.expired_before_target, true);
-  assert.ok(expired.models.every(r => r.next_price === null));
-  assert.throws(() => dailySnapshot(demo, "2023-06-01"), /calibration/);
-  assert.throws(() => dailySnapshot(demo, "2025-10-07", 1, "2025-10-07"), /after/);
-  assert.equal(observationOnOrBefore(demo.dates, "2025-10-12"), "2025-10-10");
-});
-
-register("recorded forecasts take precedence and retain issuance timestamps in CSV", () => {
-  const snapshot = dailySnapshot(demo, "2025-10-07"), saved = structuredClone(payload);
-  const records = snapshot.models.map(row => ({model: row.model, predicted_log: row.prior_log + 0.01,
-    origin_date: snapshot.prior_origin, target_date: snapshot.as_of, futcode: snapshot.futcode,
-    issued_at_utc: "2025-10-06T23:00:00+00:00"}));
-  saved.metadata.daily_forecast = {issued_forecasts: records};
-  const actual = dailySnapshot(decodeBundle(saved), snapshot.as_of);
-  assert.equal(actual.prior_recorded_at, records[0].issued_at_utc);
-  for (const [i, row] of actual.models.entries()) assert.equal(row.prior_log, records[i].predicted_log);
-  assert.ok(dailyCsv(actual).includes("prior_recorded_at"));
-  assert.ok(dailyCsv(actual).includes(records[0].issued_at_utc));
-  saved.metadata.daily_forecast.issued_forecasts.push(records[0]);
-  assert.throws(() => decodeBundle(saved), /recorded daily forecasts/);
-});
+ });
+ test('rolling reconstruction metrics preserve prior-only sample counts and source values',()=>{
+  const result=viewPanels(empirical,{...selection,view:'pca',chart:'errors'});
+  const expected=empirical.rolling_metrics.filter(r=>r.window===252&&r.method==='covariance'&&r.period==='all'&&r.tau===0);
+  assert.deepEqual(result.main.traces[0].y,expected.map(r=>r.rmse_log));
+  assert.equal(new Set(expected.map(r=>r.n_dates)).size,1);
+ });
+ test('sensitivity coverage policies select distinct saved outputs and expose excluded scenarios',()=>{
+  const strict=viewPanels(empirical,{...selection,view:'robustness',chart:'sensitivity'});
+  const relaxed=viewPanels(empirical,{...selection,view:'robustness',chart:'sensitivity',coverage:'relaxed'});
+  assert.match(strict.note,/missing_quotes/);
+  assert.ok(!strict.main.traces[0].x.includes('missing_quotes'));
+  assert.ok(relaxed.main.traces[0].x.includes('missing_quotes'));
+ });
 }
-
-runCoreChecks();

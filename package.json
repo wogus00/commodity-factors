@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:web": "node --test tests/web_core.test.mjs tests/web_remote.test.mjs"
+    "test:web": "node --test tests/web_core.test.mjs tests/web_blob.test.mjs",
+    "build": "node scripts/build_web.mjs"
   }
 }
